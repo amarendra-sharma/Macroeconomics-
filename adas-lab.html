@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<title>AD-AS Lab &mdash; Applied Macroeconomics</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>html,body{margin:0;background:#f8fafc}</style>
+</head>
+<body class="ar-wrap">
+
+<!-- Shared engine + the live question bank. The arena itself holds no answer
+     key: cases are drawn from the bank by generator id and graded server-side
+     from the seed. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="ma-backend.js?v=macro1"></script>
+<script src="ma-diagrams.js?v=macro1"></script>
+<script src="ma-generators.js?v=macro1"></script>
+<script src="ma-generators-b.js?v=macro1"></script>
+<script src="ma-generators-c.js?v=macro1"></script>
+<script src="ma-generators-d.js?v=macro1"></script>
+<script src="ma-arena.js?v=macro1"></script>
+
+<script>
+(function () {
+  "use strict";
+  // Paid content: the gate overlays a sign-in / unlock prompt for anyone without
+  // access, and leaves the page open when the backend is absent (raw-file preview).
+  if (window.MABackend && MABackend.gateContent) { MABackend.gateContent(); }
+
+  MAArena.start({
+    slug: 'adas-lab',
+    title: 'AD-AS Lab',
+    chapter: 15,
+    tagline: 'Reading shocks off the diagram',
+    intro: '<p>Given a change in output and a change in the price level, you should be able to say which curve moved. Same direction means a demand shock; opposite directions mean a supply shock.</p><p>That second case is stagflation, and it is what makes supply shocks so awkward: any demand-side remedy improves one half of the problem by worsening the other. There is no setting of the interest rate that fixes both.</p>',
+    cases: { count: 8 }
+  });
+})();
+</script>
+</body>
+</html>

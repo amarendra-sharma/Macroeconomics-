@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<title>GDP Builder &mdash; Applied Macroeconomics</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>html,body{margin:0;background:#f8fafc}</style>
+</head>
+<body class="ar-wrap">
+
+<!-- Shared engine + the live question bank. The arena itself holds no answer
+     key: cases are drawn from the bank by generator id and graded server-side
+     from the seed. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="ma-backend.js?v=macro1"></script>
+<script src="ma-diagrams.js?v=macro1"></script>
+<script src="ma-generators.js?v=macro1"></script>
+<script src="ma-generators-b.js?v=macro1"></script>
+<script src="ma-generators-c.js?v=macro1"></script>
+<script src="ma-generators-d.js?v=macro1"></script>
+<script src="ma-arena.js?v=macro1"></script>
+
+<script>
+(function () {
+  "use strict";
+  // Paid content: the gate overlays a sign-in / unlock prompt for anyone without
+  // access, and leaves the page open when the backend is absent (raw-file preview).
+  if (window.MABackend && MABackend.gateContent) { MABackend.gateContent(); }
+
+  MAArena.start({
+    slug: 'gdp-builder',
+    title: 'GDP Builder',
+    chapter: 7,
+    tagline: 'What counts, what does not, and when',
+    intro: "<p>GDP looks like arithmetic until you meet the edge cases. A car built this year and unsold still counts this year. A house built in 1890 and sold today does not. Shares, transfers and your own unpaid labour never do.</p><p>The error that costs the most marks is double counting: adding every firm's sales along a production chain counts the wheat once as wheat, again as flour, and again as bread.</p>",
+    cases: { count: 8 }
+  });
+})();
+</script>
+</body>
+</html>
