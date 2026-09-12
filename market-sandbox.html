@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<title>Market Sandbox &mdash; Applied Macroeconomics</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>html,body{margin:0;background:#f8fafc}</style>
+</head>
+<body class="ar-wrap">
+
+<!-- Shared engine + the live question bank. The arena itself holds no answer
+     key: cases are drawn from the bank by generator id and graded server-side
+     from the seed. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="ma-backend.js?v=macro1"></script>
+<script src="ma-diagrams.js?v=macro1"></script>
+<script src="ma-generators.js?v=macro1"></script>
+<script src="ma-generators-b.js?v=macro1"></script>
+<script src="ma-generators-c.js?v=macro1"></script>
+<script src="ma-generators-d.js?v=macro1"></script>
+<script src="ma-arena.js?v=macro1"></script>
+
+<script>
+(function () {
+  "use strict";
+  // This arena is part of the free preview, so it never calls gateContent().
+
+  MAArena.start({
+    slug: 'market-sandbox',
+    title: 'Market Sandbox',
+    chapter: 4,
+    tagline: 'Supply, demand and the price that clears the market',
+    intro: '<p>Every macro model you will meet this term rests on a market finding its clearing price. This arena drills that machinery until reading a shift is automatic.</p><p>Watch for the tell: a <b>demand</b> shift moves price and quantity in the <b>same</b> direction; a <b>supply</b> shift moves them in <b>opposite</b> directions. That single rule lets you infer which curve moved from nothing but the data.</p>',
+    cases: { count: 8 }
+  });
+})();
+</script>
+</body>
+</html>
