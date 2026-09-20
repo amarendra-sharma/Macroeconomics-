@@ -439,21 +439,21 @@
 <div id="modalHost"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="mn-proctor.js?v=macro3"></script>
-<script src="ma-diagrams.js?v=macro3"></script>
-<script src="ma-generators.js?v=macro3"></script>
-<script src="ma-generators-b.js?v=macro3"></script>
-<script src="ma-generators-c.js?v=macro3"></script>
-<script src="ma-generators-d.js?v=macro3"></script>
-<script src="ma-quiz.js?v=macro3"></script>
-<script src="ma-backend.js?v=macro3"></script>
+<script src="mn-proctor.js?v=macro5"></script>
+<script src="ma-diagrams.js?v=macro5"></script>
+<script src="ma-generators.js?v=macro5"></script>
+<script src="ma-generators-b.js?v=macro5"></script>
+<script src="ma-generators-c.js?v=macro5"></script>
+<script src="ma-generators-d.js?v=macro5"></script>
+<script src="ma-quiz.js?v=macro5"></script>
+<script src="ma-backend.js?v=macro5"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
 <script>
 /* ====================================================================
    CONFIG
    ==================================================================== */
 var SUPABASE_URL = 'https://rtaiivegcqqmdchpguzn.supabase.co';
-var SA_BUILD = 'macro-portal-2026-09-13a';
+var SA_BUILD = 'macro-portal-2026-09-20a';
 var SUPABASE_ANON_KEY = 'sb_publishable_KCPCMiKYQoEUgG45DVF5uA_ke-UxQKm';
 var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 // Shared MacroNations proctoring engine. Point it at Applied Macroeconomics's existing
@@ -5048,6 +5048,9 @@ function loadStaff(){
 /* ---- Access gating: Ch1-3 + Market Sandbox arena are free; rest needs a sub ---- */
 var FREE_CHAPTERS = { 1:true, 2:true };
 var FREE_ARENAS = { 'market-sandbox':true };
+// Arenas that are interactive simulations rather than keyed-case sets. They run
+// on ma-sims.js + ma-sim-ui.js and are graded by the server replaying the run.
+var SIM_ARENAS = { 'adas-lab':true, 'growth-lab':true };
 function resolveAccess() {
   // Cache on State.hasAccess. Staff always have access. Otherwise true if the
   // student has an active, non-expired subscription OR a super-admin fee waiver
@@ -5306,7 +5309,7 @@ function renderArenas() {
       else if (capped) { pill = '<div class="pill soon">Attempts used (' + used + '/' + ARENA_MAX_ATTEMPTS + ')</div>'; }
       else { pill = '<div class="pill">Play → ' + (uid ? '(' + (ARENA_MAX_ATTEMPTS - used) + ' left)' : '') + '</div>'; }
       div.innerHTML =
-        '<div class="c-eyebrow">Arena' + (FREE_ARENAS[slug] ? ' · Free' : '') + '</div>' +
+        '<div class="c-eyebrow">' + (SIM_ARENAS[slug] ? 'Simulation' : 'Arena') + (FREE_ARENAS[slug] ? ' \u00b7 Free' : '') + '</div>' +
         '<div class="c-title">' + esc(ARENA_TITLE[slug]) + '</div>' +
         '<div class="c-meta mono">' + esc(slug) + '</div>' + pill;
       if (file && !locked && !capped) {
