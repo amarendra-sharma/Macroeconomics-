@@ -159,7 +159,7 @@
     var round = 0;
     var control = {};
     spec.controls.forEach(function (c) {
-      control[c.key] = (c.key === "r") ? 2 : (c.key === "s" ? 20 : 0);
+      control[c.key] = (typeof c["default"] === "number") ? c["default"] : c.min;
     });
 
     /* ---------------- briefing ---------------- */
@@ -179,7 +179,15 @@
       h += "</ul></div>" +
         '<div class="sim-sec">How it is graded</div><div class="sim-body"><ul style="padding-left:20px;margin:0;">';
       spec.howScored.forEach(function (x) { h += "<li>" + esc(x) + "</li>"; });
-      h += "</ul></div>" +
+      h += "</ul></div>";
+      // The exact penalty the outcome is measured by. "Described below" in the
+      // grading text points here; without it the student is scored against a
+      // rule they were never shown.
+      if (spec.penalty) {
+        h += '<div class="sim-sec">What the penalty counts</div>' +
+             '<div class="sim-body">' + esc(spec.penalty) + "</div>";
+      }
+      h +=
         '<div class="sim-sec">Worth knowing before you start</div>' +
         '<div class="sim-body">' + esc(spec.watchFor) + "</div>" +
         '<div class="sim-why" style="margin-top:22px;">' +
@@ -212,7 +220,11 @@
       var h = '<div class="sim-card">' +
         '<div class="sim-prog">Round ' + (round + 1) + " of " + rounds + " · " + esc(spec.title) + "</div>";
       if (sh.label) {
-        h += '<div class="sim-shock' + ((sh.supply || sh.demand) ? "" : " calm") + '">' + esc(sh.label) + "</div>";
+        var hit = (typeof sh.hit === "boolean") ? sh.hit : !!(sh.supply || sh.demand);
+        h += '<div class="sim-shock' + (hit ? "" : " calm") + '">' + esc(sh.label) + "</div>";
+      }
+      if (sh.info) {
+        h += '<div class="sim-why" style="margin:0 0 16px;">' + sh.info + "</div>";
       }
       h += '<div class="sim-grid" style="margin-bottom:18px;">';
       spec.readouts.forEach(function (ro) {
@@ -227,19 +239,11 @@
       });
       h += "</div>";
 
-      var series = [];
-      if (slug === "adas-lab") {
-        series = [
-          { label: "Inflation", color: "#b45309", target: 2, values: history.map(function (s) { return s.pi; }) },
-          { label: "Output gap", color: "#0f3d9e", target: 0, values: history.map(function (s) { return s.y; }) }
-        ];
-      } else {
-        series = [
-          { label: "Capital per eff. worker", color: "#0f3d9e", values: history.map(function (s) { return s.k; }) },
-          { label: "Consumption per worker", color: "#16a34a", values: history.map(function (s) { return s.cPerWorker; }) }
-        ];
-      }
-      h += '<div style="margin-bottom:8px;">' + sparkChart(series) + "</div>";
+      var series = (spec.chart || []).map(function (c) {
+        return { label: c.label, color: c.color, target: c.target,
+                 values: history.map(function (s) { return Number(s[c.key]); }) };
+      });
+      if (series.length) { h += '<div style="margin-bottom:8px;">' + sparkChart(series) + "</div>"; }
 
       spec.controls.forEach(function (c) {
         h += '<div class="sim-ctl"><label for="ctl_' + c.key + '"><span>' + esc(c.label) + "</span>" +
@@ -249,18 +253,34 @@
              '" step="' + c.step + '" value="' + control[c.key] + '">' +
              '<div class="help">' + esc(c.help) + "</div></div>";
       });
+      /* A projection of this year BEFORE the shock lands. Without it a student
+         has no way to learn what a quarter-point is worth -- the first playtest
+         was exactly that failure: directionally right, badly wrong on magnitude,
+         with no feedback until the year had already resolved. It deliberately
+         EXCLUDES the shock: the type is announced, the size is not, so judging
+         how hard to lean is still the thing being tested. */
+      h += '<div id="simPreview" class="sim-why" style="margin-top:4px;"></div>';
       h += '<div style="margin-top:20px;"><button class="sim-btn" id="simNext">' +
            (round + 1 === rounds ? "Finish the run" : "Lock in and advance") + "</button></div></div>";
       host.innerHTML = h;
       global.scrollTo(0, 0);
 
+      function paintPreview() {
+        var box = $("simPreview");
+        if (!box) { return; }
+        var html = S.preview(slug, state, control, round, sim.shocks);
+        if (html) { box.innerHTML = html; box.style.display = ""; }
+        else { box.style.display = "none"; }
+      }
       spec.controls.forEach(function (c) {
         var inp = $("ctl_" + c.key);
         inp.addEventListener("input", function () {
           control[c.key] = Number(inp.value);
           $("val_" + c.key).textContent = inp.value + (c.unit ? " " + c.unit : "");
+          paintPreview();
         });
       });
+      paintPreview();
       $("simNext").addEventListener("click", function () {
         var d = {};
         spec.controls.forEach(function (c) { d[c.key] = control[c.key]; });
@@ -316,15 +336,23 @@
       host.innerHTML = '<div class="sim-card"><div class="sim-prog">Submitting your run…</div></div>';
 
       submit(function (server) {
-        var res = (server && server.ok && server.score) ? server.score : local;
+        // server.score is the 0..1 fraction; the full breakdown is server.result.
+        var res = (server && server.ok && server.result && typeof server.result.totalPct === "number")
+          ? server.result : local;
         var graded = !!(server && server.ok);
+        var attemptNo = graded && server.attempt_no ? server.attempt_no : 0;
+        var counts = graded && server.graded !== false;
         var h = '<div class="sim-card" style="text-align:center;">' +
           '<div class="sim-prog">' + esc(spec.title) + " · run complete</div>" +
           '<div class="sim-big" style="color:' + (res.totalPct >= 70 ? "#16a34a" : res.totalPct >= 45 ? "#b45309" : "#dc2626") + ';">' +
             n1(res.totalPct) + "%</div>" +
           '<div class="sim-note">' +
-            (graded
-              ? "Recorded. Your grade uses the average of your first " + MAX_GRADED_ATTEMPTS + " runs."
+            (graded && counts
+              ? "Recorded as graded run <b>" + (attemptNo || 1) + " of " + MAX_GRADED_ATTEMPTS +
+                "</b>. Your grade uses the average of your first " + MAX_GRADED_ATTEMPTS + " runs."
+              : graded
+              ? "Practice run " + attemptNo + " — recorded for your own reference. Your grade still " +
+                "uses your first " + MAX_GRADED_ATTEMPTS + " runs."
               : "<b>This run was NOT recorded.</b> The server could not be reached, so nothing " +
                 "was saved and your grade has not moved. Sign in and play again for it to count.") +
           "</div></div>";
@@ -338,18 +366,8 @@
             '<div class="sim-stat"><div class="v">' + res.checkpointsRight + "/" + res.checkpointsTotal + '</div>' +
               '<div class="l">Questions right</div></div>' +
           "</div>";
-        if (slug === "adas-lab") {
-          h += '<div class="sim-why">Your total penalty was <b>' + n1(-res.objective) +
-               "</b>. Doing nothing all seven years would have scored <b>" + n1(res.benchmarks.naive) +
-               "</b>; the best the model allows is <b>" + n1(res.benchmarks.bestLoss) +
-               "</b>. Your outcome mark is the share of that distance you closed.</div>";
-        } else {
-          h += '<div class="sim-why">Your total consumption per worker, counting the ' +
-               "decades that follow at your final savings rate, was <b>" + n1(res.objective) +
-               "</b>. The best any constant savings rate could have managed on this run is <b>" +
-               n1(res.benchmarks.best) + "</b>, at a rate of <b>" + res.benchmarks.bestConstantS +
-               "%</b>. Capital's share of output is 35%.</div>";
-        }
+        var expl = S.explain(slug, res);
+        if (expl) { h += '<div class="sim-why">' + expl + "</div>"; }
         h += "</div>";
 
         h += '<div class="sim-card"><div class="sim-sec">The checkpoints</div>';

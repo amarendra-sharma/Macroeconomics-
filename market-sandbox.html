@@ -10,33 +10,25 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>html,body{margin:0;background:#f8fafc}</style>
 </head>
-<body class="ar-wrap">
+<body>
 
-<!-- Shared engine + the live question bank. The arena itself holds no answer
-     key: cases are drawn from the bank by generator id and graded server-side
-     from the seed. -->
+<!-- An INTERACTIVE SIMULATION, not a set of keyed cases. The page holds no
+     model and no answer key: ma-sims.js is the model, and the same file is
+     loaded by the ma-grade edge function, which replays this student's decision
+     log to produce the grade. Nothing the browser posts is taken on trust. -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="ma-backend.js?v=macro1"></script>
-<script src="ma-diagrams.js?v=macro1"></script>
-<script src="ma-generators.js?v=macro1"></script>
-<script src="ma-generators-b.js?v=macro1"></script>
-<script src="ma-generators-c.js?v=macro1"></script>
-<script src="ma-generators-d.js?v=macro1"></script>
-<script src="ma-arena.js?v=macro1"></script>
+<script src="ma-backend.js?v=macro7"></script>
+<script src="ma-sims.js?v=macro7"></script>
+<script src="ma-sim-ui.js?v=macro7"></script>
+
+<div id="sim-root" class="sim-wrap"></div>
 
 <script>
 (function () {
   "use strict";
-  // This arena is part of the free preview, so it never calls gateContent().
-
-  MAArena.start({
-    slug: 'market-sandbox',
-    title: 'Market Sandbox',
-    chapter: 4,
-    tagline: 'Supply, demand and the price that clears the market',
-    intro: '<p>Every macro model you will meet this term rests on a market finding its clearing price. This arena drills that machinery until reading a shift is automatic.</p><p>Watch for the tell: a <b>demand</b> shift moves price and quantity in the <b>same</b> direction; a <b>supply</b> shift moves them in <b>opposite</b> directions. That single rule lets you infer which curve moved from nothing but the data.</p>',
-    cases: { count: 8 }
-  });
+  // Free preview arena: deliberately never calls gateContent(), so anyone
+  // can play it before signing up.
+  MASimUI.start({ slug: 'market-sandbox', mount: 'sim-root' });
 })();
 </script>
 </body>

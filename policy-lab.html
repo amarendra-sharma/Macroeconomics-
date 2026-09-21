@@ -10,35 +10,26 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>html,body{margin:0;background:#f8fafc}</style>
 </head>
-<body class="ar-wrap">
+<body>
 
-<!-- Shared engine + the live question bank. The arena itself holds no answer
-     key: cases are drawn from the bank by generator id and graded server-side
-     from the seed. -->
+<!-- An INTERACTIVE SIMULATION, not a set of keyed cases. The page holds no
+     model and no answer key: ma-sims.js is the model, and the same file is
+     loaded by the ma-grade edge function, which replays this student's decision
+     log to produce the grade. Nothing the browser posts is taken on trust. -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="ma-backend.js?v=macro1"></script>
-<script src="ma-diagrams.js?v=macro1"></script>
-<script src="ma-generators.js?v=macro1"></script>
-<script src="ma-generators-b.js?v=macro1"></script>
-<script src="ma-generators-c.js?v=macro1"></script>
-<script src="ma-generators-d.js?v=macro1"></script>
-<script src="ma-arena.js?v=macro1"></script>
+<script src="ma-backend.js?v=macro7"></script>
+<script src="ma-sims.js?v=macro7"></script>
+<script src="ma-sim-ui.js?v=macro7"></script>
+
+<div id="sim-root" class="sim-wrap"></div>
 
 <script>
 (function () {
   "use strict";
   // Paid content: the gate overlays a sign-in / unlock prompt for anyone without
-  // access, and leaves the page open when the backend is absent (raw-file preview).
+  // access, and leaves the page open when the backend is absent (file preview).
   if (window.MABackend && MABackend.gateContent) { MABackend.gateContent(); }
-
-  MAArena.start({
-    slug: 'policy-lab',
-    title: 'Policy Lab',
-    chapter: 6,
-    tagline: 'Price controls, taxes, and who actually pays',
-    intro: '<p>A price control is an intervention in a market that will not stop clearing just because the law says so. When price cannot ration, something else does: queues, connections, quality that quietly degrades.</p><p>The central result to internalise: the burden of a tax falls on whichever side is less able to escape &mdash; the more <b>inelastic</b> side &mdash; and who writes the cheque to the government has no bearing on it whatsoever.</p>',
-    cases: { count: 8 }
-  });
+  MASimUI.start({ slug: 'policy-lab', mount: 'sim-root' });
 })();
 </script>
 </body>
