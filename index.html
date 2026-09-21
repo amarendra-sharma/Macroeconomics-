@@ -439,21 +439,21 @@
 <div id="modalHost"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="mn-proctor.js?v=macro5"></script>
-<script src="ma-diagrams.js?v=macro5"></script>
-<script src="ma-generators.js?v=macro5"></script>
-<script src="ma-generators-b.js?v=macro5"></script>
-<script src="ma-generators-c.js?v=macro5"></script>
-<script src="ma-generators-d.js?v=macro5"></script>
-<script src="ma-quiz.js?v=macro5"></script>
-<script src="ma-backend.js?v=macro5"></script>
+<script src="mn-proctor.js?v=macro7"></script>
+<script src="ma-diagrams.js?v=macro7"></script>
+<script src="ma-generators.js?v=macro7"></script>
+<script src="ma-generators-b.js?v=macro7"></script>
+<script src="ma-generators-c.js?v=macro7"></script>
+<script src="ma-generators-d.js?v=macro7"></script>
+<script src="ma-quiz.js?v=macro7"></script>
+<script src="ma-backend.js?v=macro7"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
 <script>
 /* ====================================================================
    CONFIG
    ==================================================================== */
 var SUPABASE_URL = 'https://rtaiivegcqqmdchpguzn.supabase.co';
-var SA_BUILD = 'macro-portal-2026-09-20a';
+var SA_BUILD = 'macro-portal-2026-09-21a';
 var SUPABASE_ANON_KEY = 'sb_publishable_KCPCMiKYQoEUgG45DVF5uA_ke-UxQKm';
 var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 // Shared MacroNations proctoring engine. Point it at Applied Macroeconomics's existing
@@ -587,25 +587,46 @@ function computeAttendanceScore(sessions, checkins, presenceShare, enrolledAtMs)
   if(score>1){ score=1; } if(score<0){ score=0; }
   return { score:score, presenceRate:presenceRate, quizRate:quizRate, nSessions:n, presentN:presentN };
 }
+/* One arena's score from its raw ma_attempt rows, the same rule the server's
+   ma_recompute_arena_score() applies: each ATTEMPT scores score_pct when it
+   carries one (a simulation run) or else its fraction of cases correct (a keyed
+   arena), and the arena scores the average of the first ARENA_MAX_ATTEMPTS
+   attempts. Counting is_correct alone turned a 78% simulation run into 100%
+   and a 45% run into 0. */
+function arenaPerfFromRows(rows){
+  var byAtt = {};
+  rows.forEach(function(r){
+    var k = String(r.attempt_no===null||r.attempt_no===undefined ? 1 : r.attempt_no);
+    if(!byAtt[k]){ byAtt[k] = { c:0, n:0, sp:null }; }
+    var a = byAtt[k];
+    a.n++; if(r.is_correct){ a.c++; }
+    if(r.score_pct!==null && r.score_pct!==undefined){ a.sp = Math.max(a.sp===null?0:a.sp, Number(r.score_pct)); }
+  });
+  var keys = Object.keys(byAtt).sort(function(x,y){ return Number(x)-Number(y); }).slice(0, ARENA_MAX_ATTEMPTS);
+  if(!keys.length){ return 0; }
+  var sum = 0;
+  keys.forEach(function(k){ var a = byAtt[k]; sum += (a.sp!==null) ? a.sp : (a.n>0 ? a.c/a.n : 0); });
+  var perf = sum / keys.length;
+  return perf > 1 ? 1 : (perf < 0 ? 0 : perf);
+}
 function computeArenaScore(rows){
-  // Accepts rows from ma_attempt (one PER CASE: arena_slug, is_correct) OR
-  // pre-aggregated rows carrying a 0..1 `score` per arena. Each arena's score is
-  // the fraction of its cases the student got right. Overall = average across
-  // ALL arenas, so unplayed arenas count as 0.
+  // Accepts raw ma_attempt rows (arena_slug, is_correct, score_pct, attempt_no)
+  // OR pre-aggregated rows carrying a 0..1 `score` per arena. Overall = average
+  // across ALL arenas, so unplayed arenas count as 0.
   rows = rows ? rows : [];
-  var byArena = {};
+  var raw = {}, pres = {};
   rows.forEach(function(r){
     if(!r || !r.arena_slug){ return; }
-    if(!byArena[r.arena_slug]){ byArena[r.arena_slug] = { c:0, n:0, presScore:null }; }
-    var g = byArena[r.arena_slug];
-    if(r.score!==null && r.score!==undefined){ g.presScore = Number(r.score); }   // pre-aggregated
-    g.n++; if(r.is_correct){ g.c++; }
+    if(r.score!==null && r.score!==undefined){ pres[r.arena_slug] = Number(r.score); return; }
+    if(!raw[r.arena_slug]){ raw[r.arena_slug] = []; }
+    raw[r.arena_slug].push(r);
   });
   var sum = 0;
   for(var i=0;i<ARENA_SLUGS.length;i++){
-    var g = byArena[ARENA_SLUGS[i]];
-    if(!g){ continue; }   // unplayed -> contributes 0
-    var perf = (g.presScore!==null) ? g.presScore : (g.n>0 ? g.c/g.n : 0);
+    var slug = ARENA_SLUGS[i], perf = null;
+    if(pres.hasOwnProperty(slug)){ perf = pres[slug]; }
+    else if(raw[slug]){ perf = arenaPerfFromRows(raw[slug]); }
+    if(perf===null){ continue; }   // unplayed -> contributes 0
     if(perf > 1){ perf = 1; } if(perf < 0){ perf = 0; }
     sum += perf;
   }
@@ -1964,7 +1985,7 @@ function renderGradebook(host){
         sb.from('ma_assignment').select('id,points').eq('course_id',State.teachCourseId).eq('is_published',true),
         sb.from('ma_submission').select('assignment_id,student_id,score').eq('course_id',State.teachCourseId),
         sb.from('ma_grade_override').select('student_id,override_pct,note').eq('course_id',State.teachCourseId),
-        sb.from('ma_attempt').select('user_id,arena_slug,is_correct,created_at').eq('course_id',State.teachCourseId),
+        sb.from('ma_attempt').select('user_id,arena_slug,is_correct,score_pct,attempt_no,created_at').eq('course_id',State.teachCourseId),
         sb.from('ma_bank_items').select('id,points').in('id', Object.keys(gbIdset)),
         sb.from('ma_attendance_session').select('id,quiz_points,base_points,open_at,created_at').eq('course_id',State.teachCourseId),
         sb.from('ma_attendance_checkin').select('session_id,user_id,present,quiz_score'),
@@ -1973,25 +1994,24 @@ function renderGradebook(host){
         var aRows=ar[0].data?ar[0].data:[];
         var subs=ar[1].data?ar[1].data:[];
         var ovr=ar[2].data?ar[2].data:[];
-        // ma_attempt is one row PER CASE (user_id, arena_slug, is_correct, created_at).
-        // An arena's score for a student = fraction of that arena's cases correct.
-        // Collapse per (student, arena) into one normalized row that
-        // computeArenaScore can consume (score in 0..1, played_at = latest case).
+        // ma_attempt: one row per keyed case, or one row per simulation run
+        // (score_pct set). Collapse per (student, arena) with arenaPerfFromRows,
+        // the same rule the student's own view and the server use.
         var enrolledIds={}; rows.forEach(function(r){ enrolledIds[r.student_id]=true; });
-        var agg={};  // student -> arena -> {c:correct, n:total, last:ts}
+        var agg={};  // student -> arena -> {rows:[], last:ts}
         (ar[3].data?ar[3].data:[]).forEach(function(r){
           if(!enrolledIds[r.user_id]){ return; }
           if(!agg[r.user_id]){ agg[r.user_id]={}; }
-          if(!agg[r.user_id][r.arena_slug]){ agg[r.user_id][r.arena_slug]={c:0,n:0,last:r.created_at}; }
+          if(!agg[r.user_id][r.arena_slug]){ agg[r.user_id][r.arena_slug]={rows:[],last:r.created_at}; }
           var g=agg[r.user_id][r.arena_slug];
-          g.n++; if(r.is_correct){ g.c++; }
+          g.rows.push(r);
           if(new Date(r.created_at) > new Date(g.last)){ g.last=r.created_at; }
         });
         var arenaRows=[];
         Object.keys(agg).forEach(function(sid){
           Object.keys(agg[sid]).forEach(function(slug){
             var g=agg[sid][slug];
-            arenaRows.push({ student_id:sid, arena_slug:slug, score:(g.n>0?g.c/g.n:0), played_at:g.last });
+            arenaRows.push({ student_id:sid, arena_slug:slug, score:arenaPerfFromRows(g.rows), played_at:g.last });
           });
         });
         // group arena results per student, then compute performance-based score each
@@ -3408,7 +3428,9 @@ function renderArenaAttempts(){
         var title=ARENA_TITLE[a.arena_slug]||a.arena_slug;
         var when=a.finished_at?new Date(a.finished_at).toLocaleString():'';
         html+='<tr><td>'+esc(nameOf[uid]||uid)+'</td><td>'+esc(title)+'</td><td>#'+esc(String(a.attempt_no))+'</td>'+
-          '<td class="mono">'+esc(String(a.correct))+'/'+esc(String(a.cases))+' ('+esc(String(a.pct))+'%)</td>'+
+          // pct is a 0..1 fraction. A simulation run is one row, so "1/1" says
+          // nothing -- show the percentage alone.
+          '<td class="mono">'+(SIM_ARENAS[a.arena_slug] && Number(a.cases)===1 ? '' : esc(String(a.correct))+'/'+esc(String(a.cases))+' ')+'('+esc(String(Math.round(Number(a.pct||0)*1000)/10))+'%)</td>'+
           '<td>'+esc(when)+'</td>'+
           '<td><button class="btn btn-ghost btn-sm" data-aadrill="'+k+'">Cases</button></td></tr>';
       });
@@ -3834,6 +3856,7 @@ function arenaWorkHtml(items, sid, slug){
   var i, it, mark;
   for(i=0;i<items.length;i++){
     it=items[i];
+    if(it.sim){ html+=simRunWorkHtml(it); continue; }
     mark = it.is_correct ? '<span class="tag green">correct</span>' : '<span class="tag rose">incorrect</span>';
     html+='<div class="card" style="margin-bottom:10px;padding:12px 14px;">'+
       '<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;">'+
@@ -3852,6 +3875,28 @@ function arenaWorkHtml(items, sid, slug){
       '</div></div>';
   }
   return html;
+}
+/* A simulation run is one row with a percentage, not a right/wrong case. Show
+   what the server's replay recorded and let staff set the run's percentage. */
+function simRunWorkHtml(it){
+  var pct = Math.round(Number(it.score_pct||0)*1000)/10;
+  var tr = null; try { tr = JSON.parse(it.your_answer||'null'); } catch(e){ tr = null; }
+  var detail = tr ? ('Outcome '+esc(String(tr.outcomePct))+'% \u00b7 checkpoints '+esc(String(tr.checkpointPct))+'% \u00b7 seed '+esc(String(tr.seed))+
+                     ' \u00b7 '+esc(String((tr.decisions||[]).length))+' rounds played') : '';
+  var id = esc(String(it.attempt_id));
+  return '<div class="card" style="margin-bottom:10px;padding:12px 14px;">'+
+    '<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;">'+
+      '<div><b>Run #'+esc(String(it.attempt_no||1))+'</b>'+(Number(it.attempt_no||1)>ARENA_MAX_ATTEMPTS?' <span class="tag">practice</span>':'')+
+      '<span style="color:var(--text-subtle);font-size:12px;margin-left:8px;">'+esc(it.attempted_at?new Date(it.attempted_at).toLocaleString():'')+'</span></div>'+
+      '<div class="mono"><b>'+pct+'%</b></div></div>'+
+    (it.prompt_text?('<div style="font-size:12.5px;color:var(--text-muted);margin-top:6px;">'+esc(it.prompt_text)+'</div>'):'')+
+    (detail?('<div style="font-size:12px;color:var(--text-subtle);margin-top:4px;">'+detail+'</div>'):'')+
+    (it.regraded_at?('<div style="font-size:12px;color:var(--amber);margin-top:6px;">Regraded '+esc(new Date(it.regraded_at).toLocaleDateString())+(it.regrade_note?(' \u2014 '+esc(it.regrade_note)):'')+'</div>'):'')+
+    '<div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-top:10px;border-top:1px solid var(--border);padding-top:10px;">'+
+      '<div class="field" style="margin:0;width:130px;"><label>Run score (%)</label><input id="wsp_'+id+'" type="number" min="0" max="100" step="0.1" value="'+pct+'"></div>'+
+      '<div class="field" style="margin:0;flex:1;min-width:160px;"><label>Reason (shown on record)</label><input id="wn_'+id+'" placeholder="e.g. connection dropped mid-run" value="'+esc(String(it.regrade_note||''))+'"></div>'+
+      '<button class="btn btn-ghost btn-sm" data-arenaregrade="'+id+'" data-sim="1">Save</button>'+
+    '</div></div>';
 }
 /* Instructor review of an assignment submission: shows the uploaded file(s) and
    lets staff set/adjust the score and feedback. */
@@ -3936,16 +3981,25 @@ function regradeAttempt(attemptId, maxPts, btn, kind, sid, chapter){
 }
 function regradeArena(attemptId, btn, sid, slug){
   var e=$('wbMsg');
-  var val=$('wa_'+attemptId).value==='true';
   var note=$('wn_'+attemptId).value.trim();
-  btn.disabled=true;
-  var patch={ is_correct:val };
+  var patch;
+  if(btn.getAttribute('data-sim')){
+    var v=parseFloat($('wsp_'+attemptId).value);
+    if(isNaN(v) || v<0 || v>100){ e.textContent='Enter a run score between 0 and 100.'; e.className='msg err'; return; }
+    patch={ score_pct:Math.round(v*10)/1000, is_correct:(v>=50) };
+  } else {
+    patch={ is_correct:($('wa_'+attemptId).value==='true') };
+  }
+  patch.regraded_at=new Date().toISOString();
+  patch.regraded_by=(State.user && State.user.email) ? State.user.email : (State.user ? State.user.id : null);
   if(note){ patch.regrade_note=note; }
+  btn.disabled=true;
   sb.from('ma_attempt').update(patch).eq('id',attemptId).then(function(res){
     if(res.error){ btn.disabled=false; e.textContent='Could not save: '+res.error.message; e.className='msg err'; return; }
     sb.rpc('ma_recompute_arena_score',{ p_user:sid, p_arena:slug }).then(function(r2){
       btn.disabled=false;
-      var pct=(r2 && r2.data!==null && r2.data!==undefined)?(' New arena score: '+r2.data+'%.'):'';
+      // the RPC returns a 0..1 fraction
+      var pct=(r2 && r2.data!==null && r2.data!==undefined)?(' New arena score: '+(Math.round(Number(r2.data)*1000)/10)+'%.'):'';
       e.textContent='Updated.'+pct; e.className='msg ok';
       loadStudentWork();
     }, function(){ btn.disabled=false; e.textContent='Saved, but the arena percentage could not be recalculated.'; e.className='msg err'; loadStudentWork(); });
@@ -5050,7 +5104,8 @@ var FREE_CHAPTERS = { 1:true, 2:true };
 var FREE_ARENAS = { 'market-sandbox':true };
 // Arenas that are interactive simulations rather than keyed-case sets. They run
 // on ma-sims.js + ma-sim-ui.js and are graded by the server replaying the run.
-var SIM_ARENAS = { 'adas-lab':true, 'growth-lab':true };
+var SIM_ARENAS = {};
+ARENA_SLUGS.forEach(function(sl){ SIM_ARENAS[sl] = true; });   // every arena is now a simulation
 function resolveAccess() {
   // Cache on State.hasAccess. Staff always have access. Otherwise true if the
   // student has an active, non-expired subscription OR a super-admin fee waiver
@@ -6685,7 +6740,7 @@ function computeWeightedGrade(callback){
   Promise.all([
     sb.from('ma_course').select('id,title,owner_id,weight_reading,weight_quizzes,weight_arenas,weight_midterm,weight_final,weight_attendance,weight_capstone,att_presence_share').eq('id', courseId).maybeSingle(),
     sb.from('ma_chapter_progress').select('chapter,reading_done,quiz_passed,quiz_score').eq('student_id', uid).eq('course_id', courseId),
-    sb.from('ma_attempt').select('arena_slug,is_correct,created_at').eq('user_id', uid).eq('course_id', courseId),
+    sb.from('ma_attempt').select('arena_slug,is_correct,score_pct,attempt_no,created_at').eq('user_id', uid).eq('course_id', courseId),
     sb.from('ma_exam').select('id,kind,title,total_points,item_ids,weight,attempt_scoring').eq('course_id', courseId).eq('is_published', true),
     sb.from('ma_attendance_session').select('id,quiz_points,base_points,open_at,created_at').eq('course_id', courseId),
     sb.from('ma_attendance_checkin').select('session_id,present,quiz_score').eq('user_id', uid),
@@ -7723,7 +7778,7 @@ function loadCompletion() {
   Promise.all([
     sb.from('ma_course').select('id,title,owner_id,weight_reading,weight_quizzes,weight_arenas,weight_midterm,weight_final,weight_attendance,weight_capstone,att_presence_share').eq('id', courseId).maybeSingle(),
     sb.from('ma_chapter_progress').select('chapter,reading_done,quiz_passed,quiz_score').eq('student_id', uid).eq('course_id', courseId),
-    sb.from('ma_attempt').select('arena_slug,is_correct,created_at').eq('user_id', uid).eq('course_id', courseId),
+    sb.from('ma_attempt').select('arena_slug,is_correct,score_pct,attempt_no,created_at').eq('user_id', uid).eq('course_id', courseId),
     sb.from('ma_exam').select('id,kind,title,total_points,item_ids,weight,attempt_scoring').eq('course_id', courseId).eq('is_published', true),
     sb.from('ma_attendance_session').select('id,quiz_points,base_points,open_at,created_at').eq('course_id', courseId),
     sb.from('ma_attendance_checkin').select('session_id,present,quiz_score').eq('user_id', uid),

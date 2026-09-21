@@ -10,35 +10,26 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>html,body{margin:0;background:#f8fafc}</style>
 </head>
-<body class="ar-wrap">
+<body>
 
-<!-- Shared engine + the live question bank. The arena itself holds no answer
-     key: cases are drawn from the bank by generator id and graded server-side
-     from the seed. -->
+<!-- An INTERACTIVE SIMULATION, not a set of keyed cases. The page holds no
+     model and no answer key: ma-sims.js is the model, and the same file is
+     loaded by the ma-grade edge function, which replays this student's decision
+     log to produce the grade. Nothing the browser posts is taken on trust. -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="ma-backend.js?v=macro1"></script>
-<script src="ma-diagrams.js?v=macro1"></script>
-<script src="ma-generators.js?v=macro1"></script>
-<script src="ma-generators-b.js?v=macro1"></script>
-<script src="ma-generators-c.js?v=macro1"></script>
-<script src="ma-generators-d.js?v=macro1"></script>
-<script src="ma-arena.js?v=macro1"></script>
+<script src="ma-backend.js?v=macro7"></script>
+<script src="ma-sims.js?v=macro7"></script>
+<script src="ma-sim-ui.js?v=macro7"></script>
+
+<div id="sim-root" class="sim-wrap"></div>
 
 <script>
 (function () {
   "use strict";
   // Paid content: the gate overlays a sign-in / unlock prompt for anyone without
-  // access, and leaves the page open when the backend is absent (raw-file preview).
+  // access, and leaves the page open when the backend is absent (file preview).
   if (window.MABackend && MABackend.gateContent) { MABackend.gateContent(); }
-
-  MAArena.start({
-    slug: 'inflation-lab',
-    title: 'Inflation Lab',
-    chapter: 12,
-    tagline: 'The quantity theory, and where it bites',
-    intro: '<p>MV = PY is an identity: it is true by construction. It becomes a <b>theory</b> only when you assume velocity is stable, and that assumption is exactly what fails in a crisis.</p><p>This arena drills the growth-rate form, the Fisher effect, and the distinction that matters most for policy: the costs of <b>expected</b> inflation are menu and shoeleather costs, while the large arbitrary transfers of wealth come from inflation nobody saw coming.</p>',
-    cases: { count: 8 }
-  });
+  MASimUI.start({ slug: 'inflation-lab', mount: 'sim-root' });
 })();
 </script>
 </body>
