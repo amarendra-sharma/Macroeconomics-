@@ -406,6 +406,7 @@
       <h1 class="page-title">My Progress</h1>
       <div class="page-sub">Pulled live from your account.</div>
       <div id="completionPanel"></div>
+      <div id="progCapstone"></div>
       <h3 style="font-size:22px;margin:6px 0 12px;">Badges</h3>
       <div id="badgeCase" class="badge-case"></div>
       <div class="stat-row" id="progStats" style="margin-top:24px;"></div>
@@ -439,21 +440,21 @@
 <div id="modalHost"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="mn-proctor.js?v=macro7"></script>
-<script src="ma-diagrams.js?v=macro7"></script>
-<script src="ma-generators.js?v=macro7"></script>
-<script src="ma-generators-b.js?v=macro7"></script>
-<script src="ma-generators-c.js?v=macro7"></script>
-<script src="ma-generators-d.js?v=macro7"></script>
-<script src="ma-quiz.js?v=macro7"></script>
-<script src="ma-backend.js?v=macro7"></script>
+<script src="mn-proctor.js?v=macro9"></script>
+<script src="ma-diagrams.js?v=macro9"></script>
+<script src="ma-generators.js?v=macro9"></script>
+<script src="ma-generators-b.js?v=macro9"></script>
+<script src="ma-generators-c.js?v=macro9"></script>
+<script src="ma-generators-d.js?v=macro9"></script>
+<script src="ma-quiz.js?v=macro9"></script>
+<script src="ma-backend.js?v=macro9"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
 <script>
 /* ====================================================================
    CONFIG
    ==================================================================== */
 var SUPABASE_URL = 'https://rtaiivegcqqmdchpguzn.supabase.co';
-var SA_BUILD = 'macro-portal-2026-09-21a';
+var SA_BUILD = 'macro-portal-2026-09-22a';
 var SUPABASE_ANON_KEY = 'sb_publishable_KCPCMiKYQoEUgG45DVF5uA_ke-UxQKm';
 var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 // Shared MacroNations proctoring engine. Point it at Applied Macroeconomics's existing
@@ -529,18 +530,25 @@ var ARENA_MAX_ATTEMPTS = 2;   // only the first N attempts per arena count towar
 // the student has actually played, so My Progress can show real per-arena scores
 // (e.g. "Monopoly: 92%") instead of only the diluted 12-arena aggregate.
 function arenaBreakdown(rows){
+  // Per-arena score for display. Uses arenaPerfFromRows(), the same rule every
+  // grade uses: a simulation run's score_pct, or a keyed attempt's case
+  // fraction, averaged over the first ARENA_MAX_ATTEMPTS attempts. Counting
+  // is_correct rows showed a 42% simulation run as "0%, incorrect".
   rows = rows ? rows : [];
   var byArena = {};
   rows.forEach(function(r){
     if(!r || !r.arena_slug){ return; }
-    if(!byArena[r.arena_slug]){ byArena[r.arena_slug] = { c:0, n:0 }; }
-    byArena[r.arena_slug].n++; if(r.is_correct){ byArena[r.arena_slug].c++; }
+    if(!byArena[r.arena_slug]){ byArena[r.arena_slug] = []; }
+    byArena[r.arena_slug].push(r);
   });
   var out = [];
   for(var i=0;i<ARENA_SLUGS.length;i++){
-    var slug = ARENA_SLUGS[i]; var g = byArena[slug];
-    if(!g || g.n===0){ continue; }   // only arenas actually played
-    out.push({ slug:slug, title:(ARENA_TITLE[slug]||slug), correct:g.c, total:g.n, pct:(g.n>0?g.c/g.n:0) });
+    var slug = ARENA_SLUGS[i]; var list = byArena[slug];
+    if(!list || !list.length){ continue; }   // only arenas actually played
+    var runs = {}; list.forEach(function(r){ runs[String(r.attempt_no||1)] = true; });
+    var c = 0; list.forEach(function(r){ if(r.is_correct){ c++; } });
+    out.push({ slug:slug, title:(ARENA_TITLE[slug]||slug), correct:c, total:list.length,
+               runs:Object.keys(runs).length, pct:arenaPerfFromRows(list) });
   }
   return out;
 }
@@ -1168,7 +1176,7 @@ function renderDashboard(host){
     return;
   }
   Promise.all([
-    sb.from('ma_enrollment').select('id',{count:'exact'}).in('course_id',courseIds).eq('status','active'),
+    sb.from('ma_enrollment').select('id',{count:'exact'}).in('course_id',courseIds).in('status',['active','comped']),
     sb.from('ma_enrollment').select('status').in('course_id',courseIds),
     sb.from('ma_exam').select('id',{count:'exact'}).in('course_id',courseIds)
   ]).then(function(r){
@@ -1415,7 +1423,7 @@ function renderAnnounce(host){
 }
 function emailStudents(subject, body){
   // open the professor's own email client, BCC all enrolled students
-  sb.from('ma_enrollment').select('ma_person(email)').eq('course_id',State.teachCourseId).eq('status','active').then(function(r){
+  sb.from('ma_enrollment').select('ma_person(email)').eq('course_id',State.teachCourseId).in('status',['active','comped']).then(function(r){
     var rows=r.data?r.data:[];
     var emails=[];
     rows.forEach(function(x){ if(x.ma_person && x.ma_person.email){ emails.push(x.ma_person.email); } });
@@ -1902,7 +1910,7 @@ function renderGradebook(host){
   var c=findCourse(State.teachCourseId);
   if(!c){ host.innerHTML='<div class="card empty">Could not find this course. Try reselecting it from your course list.</div>'; return; }
   function wnum(v, d){ return (v===null||v===undefined||isNaN(Number(v)))?d:Number(v); }
-  var weights={reading:wnum(c.weight_reading,0.1),quizzes:wnum(c.weight_quizzes,0.2),arenas:wnum(c.weight_arenas,0.1),midterm:wnum(c.weight_midterm,0.3),final:wnum(c.weight_final,0.3),attendance:wnum(c.weight_attendance,0)};
+  var weights={reading:wnum(c.weight_reading,0.1),quizzes:wnum(c.weight_quizzes,0.2),arenas:wnum(c.weight_arenas,0.1),midterm:wnum(c.weight_midterm,0.3),final:wnum(c.weight_final,0.3),attendance:wnum(c.weight_attendance,0),capstone:wnum(c.weight_capstone,0)};
   // 1) gradebook view rows, 2) published exams, 3) exam attempts, + assignments/overrides
   // Guard every stage with a timeout so a hung query names itself instead of
   // spinning forever.
@@ -1912,10 +1920,14 @@ function renderGradebook(host){
       new Promise(function(_, rej){ setTimeout(function(){ rej(new Error('timed out loading '+label)); }, ms||20000); })
     ]);
   }
-  withTimeout(Promise.all([
+  // The capstone's tournament half is refreshed first, so the gradebook
+  // shows the same standing the student sees on My Grades.
+  withTimeout(capstoneSync(State.teachCourseId).then(function(){ return Promise.all([
     sb.from('ma_gradebook_v').select('*').eq('course_id',State.teachCourseId),
-    sb.from('ma_exam').select('id,kind,total_points,item_ids,is_published,attempt_scoring').eq('course_id',State.teachCourseId).eq('is_published',true)
-  ]), 'the gradebook view', 20000).then(function(r){
+    sb.from('ma_exam').select('id,kind,total_points,item_ids,is_published,attempt_scoring').eq('course_id',State.teachCourseId).eq('is_published',true),
+    sb.from('ma_capstone_config').select('sim_share').eq('course_id',State.teachCourseId).maybeSingle()
+  ]); }), 'the gradebook view', 20000).then(function(r){
+    State.gbCapCfg = (r[2] && r[2].data) ? r[2].data : null;
     if(r[0] && r[0].error){ host.innerHTML='<div class="card empty">The gradebook list could not load: '+esc(r[0].error.message)+'</div>'; return; }
     var rows=r[0].data?r[0].data:[];
     var exams=r[1].data?r[1].data:[];
@@ -1985,7 +1997,7 @@ function renderGradebook(host){
         sb.from('ma_assignment').select('id,points').eq('course_id',State.teachCourseId).eq('is_published',true),
         sb.from('ma_submission').select('assignment_id,student_id,score').eq('course_id',State.teachCourseId),
         sb.from('ma_grade_override').select('student_id,override_pct,note').eq('course_id',State.teachCourseId),
-        sb.from('ma_attempt').select('user_id,arena_slug,is_correct,score_pct,attempt_no,created_at').eq('course_id',State.teachCourseId),
+        sb.from('ma_attempt').select('user_id,arena_slug,is_correct,score_pct,attempt_no,created_at').or('course_id.eq.'+State.teachCourseId+',course_id.is.null'),
         sb.from('ma_bank_items').select('id,points').in('id', Object.keys(gbIdset)),
         sb.from('ma_attendance_session').select('id,quiz_points,base_points,open_at,created_at').eq('course_id',State.teachCourseId),
         sb.from('ma_attendance_checkin').select('session_id,user_id,present,quiz_score'),
@@ -2091,6 +2103,11 @@ function buildGradebook(host,c,weights,rows,gradedExams,examScore,asgScore,overr
     var attend=(attScoreOf[r.student_id]!==undefined&&attScoreOf[r.student_id]!==null)?attScoreOf[r.student_id]:null;
     var comps=[['reading',reading,weights.reading],['quizzes',quizzes,weights.quizzes],['arenas',arenas,weights.arenas]];
     if(attend!==null && weights.attendance>0){ comps.push(['attendance',attend,weights.attendance]); }
+    // GEST capstone -- the same capstoneScore() My Grades uses. Until either
+    // half is recorded it is left out and the weights renormalize, exactly as
+    // on the student's side.
+    var cap=capstoneScore({ sim_score:r.sim_score, rubric_score:r.rubric_score }, State.gbCapCfg);
+    if(cap!==null && weights.capstone>0){ comps.push(['capstone',cap,weights.capstone]); }
     // one component per published exam, each on its own weight
     var examScores={}; // examId -> fraction (or null)
     gradedExams.forEach(function(e){
@@ -2109,7 +2126,7 @@ function buildGradebook(host,c,weights,rows,gradedExams,examScore,asgScore,overr
     var asg=(asgScore[r.student_id]!==undefined&&asgScore[r.student_id]!==null)?asgScore[r.student_id]:null;
     var ovr=overrideOf[r.student_id]?overrideOf[r.student_id]:null;
     var finalPct = ovr ? (Number(ovr.pct)/100) : total;
-    return { sid:r.student_id, email:r.email, name:r.full_name, sub:r.sub_status, reading:reading, quizzes:quizzes, arenas:arenas, attendance:attend,
+    return { sid:r.student_id, email:r.email, name:r.full_name, sub:r.sub_status, reading:reading, quizzes:quizzes, arenas:arenas, attendance:attend, capstone:cap,
       practice:(r.practice_attempts>0?r.practice_correct/r.practice_attempts:null),
       examScores:examScores, assignments:asg, computed:total, override:ovr, finalPct:finalPct };
   });
@@ -2134,7 +2151,7 @@ function buildGradebook(host,c,weights,rows,gradedExams,examScore,asgScore,overr
     return (Number(av)-Number(bv))*dir;
   });
   var examHeadHtml=examCols.map(function(col){ return '<th scope="col">'+col.label+'</th>'; }).join('');
-  html+='<div class="tbl-wrap"><table class="tbl"><thead><tr>'+sTh('Student','name')+'<th scope="col">Sub</th>'+sTh('Reading','reading')+sTh('Quizzes','quizzes')+sTh('Arenas','arenas')+sTh('Attend','attendance')+sTh('Assign','assignments')+examHeadHtml+sTh('Weighted','computed')+'<th scope="col">Override %</th>'+sTh('Final','finalPct')+'<th scope="col"></th></tr></thead><tbody>';
+  html+='<div class="tbl-wrap"><table class="tbl"><thead><tr>'+sTh('Student','name')+'<th scope="col">Sub</th>'+sTh('Reading','reading')+sTh('Quizzes','quizzes')+sTh('Arenas','arenas')+sTh('Attend','attendance')+sTh('Capstone','capstone')+sTh('Assign','assignments')+examHeadHtml+sTh('Weighted','computed')+'<th scope="col">Override %</th>'+sTh('Final','finalPct')+'<th scope="col"></th></tr></thead><tbody>';
   computed.forEach(function(g){
     var examCells=examCols.map(function(col){
       var f=g.examScores[col.id];
@@ -2143,6 +2160,7 @@ function buildGradebook(host,c,weights,rows,gradedExams,examScore,asgScore,overr
     html+='<tr><th scope="row" style="font-weight:500;">'+esc(g.name||g.email)+'</th><td>'+subTag(g.sub)+'</td>'+
       '<td>'+pct(g.reading)+'</td><td>'+pct(g.quizzes)+'</td><td>'+pct(g.arenas)+'</td>'+
       '<td>'+(g.attendance===null||g.attendance===undefined?'<span class="tag dim">--</span>':pct(g.attendance))+'</td>'+
+      '<td>'+(g.capstone===null||g.capstone===undefined?'<span class="tag dim">--</span>':pct(g.capstone))+'</td>'+
       '<td>'+(g.assignments===null?'<span class="tag dim">--</span>':pct(g.assignments))+'</td>'+
       examCells+
       '<td>'+pct(g.computed)+'</td>'+
@@ -2210,6 +2228,7 @@ function openGradeBreakdown(courseId, studentId, studentName, g, weights, graded
       { key:'Arenas',    frac:g.arenas,   w:weights.arenas }
     ];
     if(g.attendance!==null && g.attendance!==undefined && weights.attendance>0){ comps.push({ key:'Attendance', frac:g.attendance, w:weights.attendance }); }
+    if(g.capstone!==null && g.capstone!==undefined && weights.capstone>0){ comps.push({ key:'GEST Capstone', frac:g.capstone, w:weights.capstone }); }
     if(gradedExams && gradedExams.length && g.examScores){
       gradedExams.forEach(function(e){
         var f=g.examScores[e.id];
@@ -2268,14 +2287,14 @@ function exportCSV(c,rows,examCols){
     var t=String(col.label).replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&#39;/g,"'").replace(/&quot;/g,'"');
     return '"'+t.replace(/"/g,'""')+'%"';
   });
-  var head=['Student','Email','Subscription','Reading%','Quizzes%','Arenas%','Attendance%','Assignments%'].concat(examHead).concat(['Weighted%','Override%','Final grade%']);
+  var head=['Student','Email','Subscription','Reading%','Quizzes%','Arenas%','Attendance%','Capstone%','Assignments%'].concat(examHead).concat(['Weighted%','Override%','Final grade%']);
   var lines=[head.join(',')];
   rows.forEach(function(g){
     function p(x){ return x===null||x===undefined?'':Math.round(x*100); }
     var ovr = g.override ? g.override.pct : '';
     var examVals = examCols.map(function(col){ var f=g.examScores?g.examScores[col.id]:null; return p(f); });
     var line=[ '"'+(g.name||'').replace(/"/g,'""')+'"', '"'+(g.email||'')+'"', g.sub,
-      p(g.reading),p(g.quizzes),p(g.arenas),(g.attendance===null||g.attendance===undefined?'':p(g.attendance)),p(g.assignments) ].concat(examVals).concat([ p(g.computed), ovr, p(g.finalPct) ]);
+      p(g.reading),p(g.quizzes),p(g.arenas),(g.attendance===null||g.attendance===undefined?'':p(g.attendance)),(g.capstone===null||g.capstone===undefined?'':p(g.capstone)),p(g.assignments) ].concat(examVals).concat([ p(g.computed), ovr, p(g.finalPct) ]);
     lines.push(line.join(','));
   });
   var blob=new Blob([lines.join('\n')],{type:'text/csv'});
@@ -3091,7 +3110,7 @@ function openSubmissions(asgId, title, points){
   panel.innerHTML=loadingCard();
   Promise.all([
     sb.from('ma_submission').select('*').eq('assignment_id',asgId),
-    sb.from('ma_enrollment').select('student_id,ma_person(email,full_name)').eq('course_id',State.teachCourseId).eq('status','active')
+    sb.from('ma_enrollment').select('student_id,ma_person(email,full_name)').eq('course_id',State.teachCourseId).in('status',['active','comped'])
   ]).then(function(res){
     var subs=res[0].data?res[0].data:[];
     var enr=res[1].data?res[1].data:[];
@@ -3400,7 +3419,7 @@ function renderArenaAttempts(){
   var cid=State.teachCourseId;
   // Pull enrolled students (for names) and the attempt rollup in parallel.
   Promise.all([
-    sb.from('ma_enrollment').select('student_id, user_id, ma_person(user_id,email,full_name)').eq('course_id',cid).eq('status','active'),
+    sb.from('ma_enrollment').select('student_id, user_id, ma_person(user_id,email,full_name)').eq('course_id',cid).in('status',['active','comped']),
     sb.from('ma_arena_attempt_rollup').select('user_id, arena_slug, attempt_no, cases, correct, pct, finished_at').eq('course_id',cid).order('finished_at',{ascending:false}).limit(3000)
   ]).then(function(r){
     var body=$('arenaAttemptsBody'); if(!body){ return; }
@@ -4867,7 +4886,7 @@ function loadCourseWaiver(c){
 function loadSubs(c){
   // build from roster joined to subscriptions
   Promise.all([
-    sb.from('ma_enrollment').select('student_id,ma_person(email,full_name)').eq('course_id',State.teachCourseId).eq('status','active'),
+    sb.from('ma_enrollment').select('student_id,ma_person(email,full_name)').eq('course_id',State.teachCourseId).in('status',['active','comped']),
     sb.from('ma_enrollment').select('*').eq('course_id',State.teachCourseId),
     sb.from('ma_fee_waiver').select('student_id').eq('course_id',State.teachCourseId).not('student_id','is',null)
   ]).then(function(r){
@@ -5256,7 +5275,7 @@ function ensureProfileAndCourse() {
   // profile row already upserted in onSignedIn (without role, so admin/instructor
   // roles are never clobbered). Resolve the student's course from ACTIVE enrollments
   // only -- a DROPPED enrollment must not drive progress, grades, or the exam list.
-  return sb.from('ma_enrollment').select('course_id, status').eq('student_id', uid).eq('status', 'active').then(function(enr) {
+  return sb.from('ma_enrollment').select('course_id, status').eq('student_id', uid).in('status', ['active','comped']).then(function(enr) {
     var rows = enr.data ? enr.data : [];
     var cids = rows.map(function(r){ return r.course_id; });
     // Fetch owners separately instead of an ma_course(owner_id) embed. The embed
@@ -5368,7 +5387,15 @@ function renderArenas() {
         '<div class="c-title">' + esc(ARENA_TITLE[slug]) + '</div>' +
         '<div class="c-meta mono">' + esc(slug) + '</div>' + pill;
       if (file && !locked && !capped) {
-        div.addEventListener('click', function() { window.open(file + (State.hasAccess ? ((file.indexOf('?')>=0?'&':'?')+'enrolled=1') : ''), '_blank'); });
+        div.addEventListener('click', function() {
+          // Pass the course so the run is recorded against it -- the arena page
+          // cannot tell which course a student in two sections is playing for.
+          var q = [];
+          if (State.hasAccess) { q.push('enrolled=1'); }
+          var cid = State.payCourseId || State.selfCourseId || State.teachCourseId || null;
+          if (cid) { q.push('course=' + encodeURIComponent(cid)); }
+          window.open(file + (q.length ? ((file.indexOf('?')>=0?'&':'?') + q.join('&')) : ''), '_blank');
+        });
       } else if (file && locked) {
         div.style.opacity = '.7';
         div.addEventListener('click', function() { openSubscribePrompt(ARENA_TITLE[slug] + ' arena'); });
@@ -5475,7 +5502,7 @@ function annSeenKey(){ return 'ma_annSeen_' + (State.user ? State.user.id : 'ano
 // per student+device; cleared when they open the Announcements tab.
 function refreshAnnBadge(){
   var dot=$('annDot'); if(!dot || !State.user){ return; }
-  sb.from('ma_enrollment').select('course_id').eq('student_id',State.user.id).eq('status','active').then(function(en){
+  sb.from('ma_enrollment').select('course_id').eq('student_id',State.user.id).in('status',['active','comped']).then(function(en){
     var ids=(en.data?en.data:[]).map(function(x){ return x.course_id; });
     if(!ids.length){ dot.style.display='none'; return; }
     sb.from('ma_announcement').select('created_at').in('course_id',ids).order('created_at',{ascending:false}).limit(1).then(function(r){
@@ -5490,7 +5517,7 @@ function refreshAnnBadge(){
 function loadMyAnnounce(){
   var box=$('myAnnBody'); if(!box || !State.user){ return; }
   box.innerHTML=loadingCard();
-  sb.from('ma_enrollment').select('course_id').eq('student_id',State.user.id).eq('status','active').then(function(en){
+  sb.from('ma_enrollment').select('course_id').eq('student_id',State.user.id).in('status',['active','comped']).then(function(en){
     var ids=(en.data?en.data:[]).map(function(x){ return x.course_id; });
     if(ids.length===0){ box.innerHTML='<div class="card empty">No announcements yet. When your instructor posts one, it appears here.</div>'; return; }
     sb.from('ma_announcement').select('*').in('course_id',ids).order('created_at',{ascending:false}).then(function(r){
@@ -5513,7 +5540,7 @@ function loadMyAnnounce(){
 function loadMyMaterials(){
   var box=$('myMatBody'); if(!box || !State.user){ return; }
   box.innerHTML=loadingCard();
-  sb.from('ma_enrollment').select('course_id').eq('student_id',State.user.id).eq('status','active').then(function(en){
+  sb.from('ma_enrollment').select('course_id').eq('student_id',State.user.id).in('status',['active','comped']).then(function(en){
     var ids=(en.data?en.data:[]).map(function(x){ return x.course_id; });
     if(ids.length===0){ box.innerHTML='<div class="card empty">No materials yet. When your instructor shares lecture videos or slides, they appear here.</div>'; return; }
     sb.from('ma_material').select('*').in('course_id',ids).order('position',{ascending:true}).order('created_at',{ascending:false}).then(function(r){
@@ -5557,7 +5584,7 @@ function loadMyCourses() {
   var uid = State.user.id;
   // Plain enrollment read + separate course fetch (no ma_course(...) embed,
   // which failed through PostgREST on live data).
-  sb.from('ma_enrollment').select('course_id,status').eq('student_id', uid).eq('status','active').then(function(res){
+  sb.from('ma_enrollment').select('course_id,status').eq('student_id', uid).in('status',['active','comped']).then(function(res){
     var rows = res.data ? res.data : [];
     var cids = rows.map(function(r){ return r.course_id; });
     if (cids.length === 0) { $('homeCourses').innerHTML = ''; return; }
@@ -5662,7 +5689,7 @@ function loadHomeDeadlines(){
   var host=$('homeDeadlines'); if(!host){ return; }
   if(State.guest || !State.user){ host.innerHTML=''; return; }
   var uid=State.user.id;
-  sb.from('ma_enrollment').select('course_id').eq('user_id',uid).eq('status','active').then(function(er){
+  sb.from('ma_enrollment').select('course_id').eq('user_id',uid).in('status',['active','comped']).then(function(er){
     var courseIds=((er&&er.data)?er.data:[]).map(function(x){ return x.course_id; });
     if(courseIds.length===0){ host.innerHTML=''; return; }
     Promise.all([
@@ -6316,7 +6343,7 @@ function openExamReview(examId){
 function loadMyAssignments(){
   var host=$('myAsgBody'); if(!host || !State.user){ return; }
   host.innerHTML=loadingCard();
-  sb.from('ma_enrollment').select('course_id').eq('student_id',State.user.id).eq('status','active').then(function(en){
+  sb.from('ma_enrollment').select('course_id').eq('student_id',State.user.id).in('status',['active','comped']).then(function(en){
     var ids=(en.data?en.data:[]).map(function(x){ return x.course_id; });
     if(ids.length===0){ host.innerHTML='<div class="card empty">You are not enrolled in a course with assignments yet.</div>'; return; }
     Promise.all([
@@ -6402,8 +6429,9 @@ function loadStudentAsgFiles(asgId){
    The MacroNations Global Economic Strategy Tournament is the capstone
    experience for this course. It has two graded halves:
 
-     * the SIMULATION run itself  (sim_score, entered by the instructor
-       from the tournament standings), and
+     * the SIMULATION run itself  (sim_score, pulled automatically from the
+       linked GEST tournament by ma_capstone_sync -- or entered by hand when
+       no tournament is linked, or overridden per student), and
      * a REFLECTION MEMO the student writes about their policy choices
        (rubric_score, graded here).
 
@@ -6443,19 +6471,81 @@ function capstoneCourseId(){
   return State.payCourseId || State.selfCourseId || null;
 }
 
+/* ---------------------------- tournament link ---------------------------- */
+/* The tournament (macronations.com) and this course share one Supabase
+   project, so a run's standing is read straight from GEST's own tables by
+   ma_capstone_sync() -- see ma_13_gest_link.sql. Nothing is re-typed. */
+
+/* Refresh this course's capstone rows from the linked tournament. Never
+   blocks the page: if the refresh fails, the last stored standing is shown. */
+function capstoneSync(courseId){
+  if(!courseId){ return Promise.resolve(null); }
+  return sb.rpc('ma_capstone_sync',{ p_course:courseId }).then(function(r){
+    return (r && !r.error) ? r.data : null;
+  }, function(){ return null; });
+}
+
+/* Open the class tournament already signed in. The window is opened FIRST,
+   inside the click, because a browser blocks a window opened after a network
+   call; the address is filled in once the one-time sign-in link is back. */
+function openGestTournament(courseId, fallbackUrl, btn){
+  var w = null;
+  try { w = window.open('about:blank', '_blank'); } catch(e){ w = null; }
+  if(w){ try { w.opener = null; w.document.title='Opening your tournament…'; w.document.body.innerHTML='<p style="font:16px system-ui;padding:24px;">Opening your class tournament…</p>'; } catch(e){} }
+  if(btn){ btn.disabled=true; }
+  function go(url){
+    if(btn){ btn.disabled=false; }
+    if(w && !w.closed){ w.location.href=url; } else { window.location.href=url; }
+  }
+  var back = window.location.href.split('#')[0];
+  sb.functions.invoke('ma-gest-handoff',{ body:{ course_id:courseId, return_to:back } }).then(function(res){
+    if(res && !res.error && res.data && res.data.url){ go(res.data.url); return; }
+    // The hand-off is a convenience: if it is down, the plain link still works
+    // (the student signs in there with the same email and password).
+    go(fallbackUrl || 'https://macronations.com/');
+  }, function(){ go(fallbackUrl || 'https://macronations.com/'); });
+}
+
+function capRoundsTable(hist){
+  if(!hist || !hist.length){ return ''; }
+  function n(v){ return (v===null||v===undefined||v==='')?'—':Math.round(Number(v)); }
+  var h='<div class="tbl-wrap" style="margin-top:12px;"><table class="tbl"><thead><tr>'+
+    '<th>Round</th><th>Total</th><th>GDP</th><th>Stability</th><th>Equality</th><th>Sustainability</th><th>Innovation</th>'+
+    '</tr></thead><tbody>';
+  hist.forEach(function(x){
+    h+='<tr><td>'+n(x.round)+'</td><td><b>'+n(x.total)+'</b></td><td>'+n(x.gdp)+'</td><td>'+n(x.stability)+'</td>'+
+       '<td>'+n(x.equality)+'</td><td>'+n(x.sustainability)+'</td><td>'+n(x.innovation)+'</td></tr>';
+  });
+  return h+'</tbody></table></div>';
+}
+
+/* One short line that says where the simulation score came from. */
+function capSourceNote(cap, cfg){
+  if(!cap){ return ''; }
+  if(cap.sim_override){ return 'Set by your instructor.'; }
+  if(cap.sim_source==='tournament'){
+    var how = (cfg && cfg.score_method==='points')
+      ? 'tournament points ÷ 10'
+      : 'your team’s points as a share of the top team’s';
+    return (cap.sim_final ? 'Final' : 'Provisional — updates automatically after every round')+' · '+how+'.';
+  }
+  return '';
+}
+
 /* -------------------------------- student -------------------------------- */
 function loadMyCapstone(){
   var host=$('myCapBody'); if(!host || !State.user){ return; }
   host.innerHTML=loadingCard();
   var uid=State.user.id, courseId=capstoneCourseId();
   if(!courseId){ host.innerHTML='<div class="card empty">Join a course to see its capstone.</div>'; return; }
-  Promise.all([
+  capstoneSync(courseId).then(function(){ return Promise.all([
     sb.from('ma_capstone_config').select('*').eq('course_id',courseId).maybeSingle(),
     sb.from('ma_capstone').select('*').eq('course_id',courseId).eq('student_id',uid).maybeSingle(),
     sb.from('ma_course').select('weight_capstone').eq('id',courseId).maybeSingle()
-  ]).then(function(r){
+  ]); }).then(function(r){
     var cfg=r[0].data, cap=r[1].data, course=r[2].data;
     var url=(cfg&&cfg.tournament_url)?cfg.tournament_url:'https://macronations.com/';
+    var linked=!!(cfg&&cfg.tournament_id);
     var now=Date.now();
     var opens=(cfg&&cfg.opens_at)?new Date(cfg.opens_at).getTime():null;
     var closes=(cfg&&cfg.closes_at)?new Date(cfg.closes_at).getTime():null;
@@ -6470,33 +6560,42 @@ function loadMyCapstone(){
     html+='<div class="card" style="margin-bottom:16px;">'+
       '<h3 style="font-size:16px;margin-bottom:6px;">The tournament</h3>'+
       '<div style="font-size:13px;color:var(--text-muted);line-height:1.6;">'+
-        'You run a nation’s economy for a series of rounds — setting policy, absorbing shocks, and '+
+        'You and your team run a nation’s economy for a series of rounds — setting policy, absorbing shocks, and '+
         'living with the consequences. It is worth <b>'+Math.round(weight*100)+'%</b> of your course grade: '+
         '<b>'+Math.round(share)+'%</b> of that from how your nation performs and <b>'+Math.round(100-share)+'%</b> '+
         'from the reflection memo you write below.'+
+        (linked?' Your tournament result comes into this page and your grades <b>automatically</b> — you do not need to report it.':'')+
       '</div>'+
       (cfg&&cfg.instructions?'<div style="font-size:13px;color:var(--text-muted);white-space:pre-wrap;margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">'+esc(cfg.instructions)+'</div>':'')+
       '<div style="margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">'+
-        '<a class="btn btn-primary btn-sm" href="'+esc(url)+'" target="_blank" rel="noopener">Open the tournament &rarr;</a>'+
+        '<button class="btn btn-primary btn-sm" id="capOpen">Open the tournament &rarr;</button>'+
         (opens!==null?'<span style="font-size:12px;color:var(--text-subtle);">Opens '+new Date(cfg.opens_at).toLocaleString()+'</span>':'')+
         (closes!==null?'<span style="font-size:12px;color:'+(shut?'var(--rose)':'var(--text-subtle)')+';">'+(shut?'Closed ':'Closes ')+new Date(cfg.closes_at).toLocaleString()+'</span>':'')+
       '</div>'+
+      '<div style="font-size:12px;color:var(--text-subtle);margin-top:8px;">Opens in a new tab, already signed in with your course account.</div>'+
     '</div>';
 
-    /* ---- the run, as recorded by the instructor ---- */
-    var haveRun = cap && (cap.nation || cap.team_name || cap.sim_score!==null&&cap.sim_score!==undefined);
+    /* ---- the run ---- */
+    var haveTeam = cap && (cap.team_name || cap.team_id);
+    var haveScore = cap && cap.sim_score!==null && cap.sim_score!==undefined;
     html+='<div class="card" style="margin-bottom:16px;">'+
       '<h3 style="font-size:16px;margin-bottom:10px;">Your run</h3>';
-    if(haveRun){
+    if(haveTeam || haveScore){
       html+='<div class="stat-row">'+
-        statCard(cap.nation?cap.nation:'—','nation')+
-        statCard(cap.team_name?cap.team_name:'—','team')+
+        statCard(cap.team_name?esc(cap.team_name):'—','team')+
+        statCard(cap.sim_rank?('#'+cap.sim_rank+(cap.sim_teams?' of '+cap.sim_teams:'')):'—','rank')+
+        statCard(cap.sim_points!==null&&cap.sim_points!==undefined?Math.round(Number(cap.sim_points))+' / 1000':'—','tournament points')+
         statCard(String(cap.rounds_played||0),'rounds played')+
-        statCard(cap.sim_score!==null&&cap.sim_score!==undefined?Math.round(Number(cap.sim_score))+'%':'not posted','tournament score')+
-        (cap.sim_rank?statCard('#'+cap.sim_rank,'rank'):'')+
-      '</div>';
+        statCard(haveScore?Math.round(Number(cap.sim_score))+'%':'not yet','simulation score')+
+      '</div>'+
+      '<div style="font-size:12px;color:var(--text-subtle);margin-top:8px;">'+esc(capSourceNote(cap,cfg))+'</div>'+
+      capRoundsTable(cap.sim_history);
+    } else if(linked){
+      html+='<div style="font-size:13px;color:var(--text-muted);">You have not joined a team in your class tournament yet. '+
+        'Open the tournament and either <b>create a team</b> or enter a classmate’s <b>invite code</b>. '+
+        'Your standing appears here as soon as the first round is played.</div>';
     } else {
-      html+='<div style="font-size:13px;color:var(--text-subtle);">Nothing recorded yet. Your instructor posts tournament results here after the round closes.</div>';
+      html+='<div style="font-size:13px;color:var(--text-subtle);">Nothing recorded yet. Your instructor has not linked the class tournament to this course; your result will appear here once they do, or when they post it.</div>';
     }
     html+='</div>';
 
@@ -6533,6 +6632,9 @@ function loadMyCapstone(){
 
     host.innerHTML=html;
 
+    var ob=$('capOpen');
+    if(ob){ ob.addEventListener('click', function(){ openGestTournament(courseId, url, ob); }); }
+
     var btn=$('capSubmit');
     if(btn){ btn.addEventListener('click', function(){
       var memo=$('capMemo').value.trim();
@@ -6558,20 +6660,56 @@ function loadMyCapstone(){
   });
 }
 
+/* Compact capstone card for My Progress. */
+function renderProgressCapstone(){
+  var host=$('progCapstone'); if(!host || !State.user){ return; }
+  var courseId=capstoneCourseId(); if(!courseId){ host.innerHTML=''; return; }
+  capstoneSync(courseId).then(function(){ return Promise.all([
+    sb.from('ma_capstone_config').select('*').eq('course_id',courseId).maybeSingle(),
+    sb.from('ma_capstone').select('*').eq('course_id',courseId).eq('student_id',State.user.id).maybeSingle()
+  ]); }).then(function(r){
+    var cfg=r[0].data, cap=r[1].data;
+    if(!cfg){ host.innerHTML=''; return; }
+    var sc=capstoneScore(cap,cfg);
+    var body;
+    if(cap && (cap.team_name || cap.sim_points!==null&&cap.sim_points!==undefined)){
+      body='<div class="stat-row">'+
+        statCard(cap.team_name?esc(cap.team_name):'—','team')+
+        statCard(cap.sim_rank?('#'+cap.sim_rank+(cap.sim_teams?' of '+cap.sim_teams:'')):'—','rank')+
+        statCard(cap.sim_points!==null&&cap.sim_points!==undefined?Math.round(Number(cap.sim_points))+' / 1000':'—','points')+
+        statCard(sc===null?'—':pct(sc),'capstone so far')+
+      '</div><div style="font-size:12px;color:var(--text-subtle);margin-top:6px;">'+esc(capSourceNote(cap,cfg))+'</div>';
+    } else if(cfg.tournament_id){
+      body='<div style="font-size:13px;color:var(--text-muted);">Not on a team yet — open the tournament to create one or join a classmate’s.</div>';
+    } else {
+      body='<div style="font-size:13px;color:var(--text-subtle);">No tournament result yet.</div>';
+    }
+    host.innerHTML='<div class="card" style="margin:0 0 18px;"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">'+
+      '<h3 style="font-size:18px;margin:0;">GEST tournament</h3>'+
+      '<button class="btn btn-ghost btn-sm" id="progCapOpen">Open the tournament &rarr;</button></div>'+body+'</div>';
+    var b=$('progCapOpen');
+    if(b){ b.addEventListener('click', function(){ openGestTournament(courseId, cfg.tournament_url, b); }); }
+  }, function(){ host.innerHTML=''; });
+}
+
 /* ------------------------------ instructor ------------------------------- */
 function renderCapstone(host){
   if(!needCourse(host)){ return; }
   var courseId=State.teachCourseId;
   host.innerHTML=loadingCard();
-  Promise.all([
+  capstoneSync(courseId).then(function(){ return Promise.all([
     sb.from('ma_capstone_config').select('*').eq('course_id',courseId).maybeSingle(),
     sb.from('ma_capstone').select('*').eq('course_id',courseId),
     sb.from('ma_gradebook_v').select('student_id,full_name,email,status').eq('course_id',courseId),
-    sb.from('ma_course').select('weight_capstone').eq('id',courseId).maybeSingle()
-  ]).then(function(r){
+    sb.from('ma_course').select('weight_capstone').eq('id',courseId).maybeSingle(),
+    sb.rpc('ma_gest_tournaments')
+  ]); }).then(function(r){
     var cfg=r[0].data||{}, caps=r[1].data||[], roster=r[2].data||[], course=r[3].data||{};
+    var tours=(r[4] && !r[4].error && r[4].data)?r[4].data:[];
+    var tourErr=(r[4] && r[4].error)?r[4].error.message:'';
     var byStu={}; caps.forEach(function(c){ byStu[c.student_id]=c; });
     var weight=course.weight_capstone!==null&&course.weight_capstone!==undefined?Number(course.weight_capstone):0;
+    var linked=!!cfg.tournament_id;
 
     function dtLocal(v){
       // datetime-local wants 'YYYY-MM-DDTHH:MM' in LOCAL time; toISOString would
@@ -6582,6 +6720,17 @@ function renderCapstone(host){
       return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes());
     }
 
+    var opts='<option value="">— not linked (enter results by hand) —</option>';
+    var found=false;
+    tours.forEach(function(t){
+      var sel=(String(t.id)===String(cfg.tournament_id||''));
+      if(sel){ found=true; }
+      opts+='<option value="'+esc(t.id)+'"'+(sel?' selected':'')+'>'+esc(t.name||t.id)+
+        ' · '+esc(t.tier||'')+' · '+esc(t.status||'')+' · '+(t.teams||0)+' team'+(t.teams===1?'':'s')+
+        (t.rounds_total?(' · round '+(t.current_round||0)+'/'+t.rounds_total):'')+'</option>';
+    });
+    if(linked && !found){ opts+='<option value="'+esc(cfg.tournament_id)+'" selected>'+esc(cfg.tournament_id)+' (linked)</option>'; }
+
     var html='';
 
     /* ---- configuration ---- */
@@ -6590,58 +6739,87 @@ function renderCapstone(host){
       '<div style="font-size:12.5px;color:var(--text-muted);margin-bottom:14px;">'+
         'The capstone is worth <b>'+Math.round(weight*100)+'%</b> of the course grade (change that under Courses &rarr; grade weights).'+
       '</div>'+
-      '<div class="field"><label for="capUrl">Tournament link</label>'+
-        '<input id="capUrl" type="url" value="'+esc(cfg.tournament_url||'https://macronations.com/')+'"></div>'+
+      '<div class="field"><label for="capTour">Class tournament</label>'+
+        '<select id="capTour">'+opts+'</select>'+
+        '<div style="font-size:11.5px;color:var(--text-subtle);margin-top:4px;">'+
+          (tours.length
+            ? 'Tournaments you created on macronations.com. Once linked, each student’s team, rank and points flow in after every round — no typing.'
+            : (tourErr ? 'Could not list your tournaments ('+esc(tourErr)+').'
+                       : 'No tournaments found for your account. Create a <b>class</b> tournament on macronations.com (Admin → Tournaments), then come back and pick it here.'))+
+        '</div></div>'+
+      '<div style="display:flex;gap:12px;flex-wrap:wrap;">'+
+        '<div class="field" style="flex:1;min-width:220px;"><label for="capMethod">Tournament points become a grade by</label>'+
+          '<select id="capMethod">'+
+            '<option value="relative"'+(cfg.score_method!=='points'?' selected':'')+'>Share of the top team’s points (recommended)</option>'+
+            '<option value="points"'+(cfg.score_method==='points'?' selected':'')+'>Points ÷ 10 (1000 points = 100%)</option>'+
+          '</select>'+
+          '<div style="font-size:11.5px;color:var(--text-subtle);margin-top:4px;">An untouched economy already scores about 680/1000, so “points ÷ 10” gives nearly everyone 68–85%.</div></div>'+
+        '<div class="field" style="flex:1;min-width:160px;"><label for="capShare">Simulation share (%)</label>'+
+          '<input id="capShare" type="number" min="0" max="100" step="5" value="'+esc(cfg.sim_share!==null&&cfg.sim_share!==undefined?cfg.sim_share:60)+'">'+
+          '<div style="font-size:11.5px;color:var(--text-subtle);margin-top:4px;">The memo gets the remainder.</div></div>'+
+      '</div>'+
       '<div style="display:flex;gap:12px;flex-wrap:wrap;">'+
         '<div class="field" style="flex:1;min-width:200px;"><label for="capOpens">Opens</label>'+
           '<input id="capOpens" type="datetime-local" value="'+dtLocal(cfg.opens_at)+'"></div>'+
         '<div class="field" style="flex:1;min-width:200px;"><label for="capCloses">Closes</label>'+
           '<input id="capCloses" type="datetime-local" value="'+dtLocal(cfg.closes_at)+'"></div>'+
-        '<div class="field" style="flex:1;min-width:160px;"><label for="capShare">Simulation share (%)</label>'+
-          '<input id="capShare" type="number" min="0" max="100" step="5" value="'+esc(cfg.sim_share!==null&&cfg.sim_share!==undefined?cfg.sim_share:60)+'">'+
-          '<div style="font-size:11.5px;color:var(--text-subtle);margin-top:4px;">The memo gets the remainder.</div></div>'+
       '</div>'+
+      '<div class="field"><label for="capUrl">Fallback link</label>'+
+        '<input id="capUrl" type="url" value="'+esc(cfg.tournament_url||'https://macronations.com/')+'">'+
+        '<div style="font-size:11.5px;color:var(--text-subtle);margin-top:4px;">Only used if the signed-in hand-off is unavailable.</div></div>'+
       '<div class="field"><label for="capInstr">Instructions shown to students</label>'+
         '<textarea id="capInstr" rows="5" placeholder="What you want them to do in the tournament, and what the memo should cover…">'+esc(cfg.instructions||'')+'</textarea></div>'+
       '<div id="capCfgMsg" class="msg" role="status" aria-live="polite"></div>'+
-      '<button class="btn btn-primary btn-sm" id="capCfgSave">Save setup</button>'+
+      '<div style="display:flex;gap:10px;flex-wrap:wrap;">'+
+        '<button class="btn btn-primary btn-sm" id="capCfgSave">Save setup</button>'+
+        (linked?'<button class="btn btn-ghost btn-sm" id="capSyncNow">Refresh standings now</button>':'')+
+        (linked?'<button class="btn btn-ghost btn-sm" id="capOpenGest">Open the tournament &rarr;</button>':'')+
+      '</div>'+
+      (linked&&cfg.last_synced_at?'<div style="font-size:11.5px;color:var(--text-subtle);margin-top:8px;">Standings last refreshed '+new Date(cfg.last_synced_at).toLocaleString()+'. They also refresh automatically after every round.</div>':'')+
     '</div>';
 
     /* ---- per-student results ---- */
-    var active=roster.filter(function(x){ return x.status==='active'; });
+    var active=roster.filter(function(x){ return x.status==='active' || x.status==='comped'; });
     html+='<div class="card">'+
       '<h3 style="font-size:16px;margin-bottom:4px;">Results and memos</h3>'+
       '<div style="font-size:12.5px;color:var(--text-muted);margin-bottom:14px;">'+
-        'Enter the tournament score as a <b>percentage</b>, not a raw score — the grade should not change meaning when the tournament’s scale does. '+
-        'A student with only one half recorded has that half carry the whole capstone, so a memo graded before the standings are posted does not read as a failing run.'+
+        (linked
+          ? 'Team, rank, points and the simulation % come from the tournament. Type a different <b>Sim %</b> to override one student; <b>Use tournament</b> puts them back on the automatic score. '
+          : 'Enter the tournament score as a <b>percentage</b>. Link a class tournament above to have these fill in automatically. ')+
+        'A student with only one half recorded has that half carry the whole capstone.'+
       '</div>';
     if(active.length===0){
       html+='<div class="empty">No active students yet.</div></div>';
     } else {
       html+='<div class="tbl-wrap"><table class="tbl"><thead><tr>'+
-        '<th>Student</th><th>Nation</th><th>Rounds</th><th>Sim %</th><th>Rank</th>'+
+        '<th>Student</th><th>Team</th><th>Points</th><th>Rank</th><th>Sim %</th>'+
         '<th>Memo</th><th>Memo %</th><th>Capstone</th><th></th></tr></thead><tbody>';
       active.forEach(function(st){
         var c=byStu[st.student_id]||{};
         var sc=capstoneScore(c,cfg);
         var memoLen=(c.memo_text||'').length;
+        var auto = c.sim_source==='tournament' && !c.sim_override;
+        var simTag = c.sim_override ? ' <span class="tag violet" title="overridden by you">ovr</span>'
+                   : (auto ? ' <span class="tag green" title="from the tournament">auto</span>' : '');
         html+='<tr>'+
           '<td><div style="font-weight:600;">'+esc(st.full_name||'—')+'</div>'+
             '<div style="font-size:11.5px;color:var(--text-subtle);">'+esc(st.email||'')+'</div></td>'+
-          '<td><input class="cap-in" data-f="nation" data-s="'+esc(st.student_id)+'" type="text" style="width:110px;" value="'+esc(c.nation||'')+'"></td>'+
-          '<td><input class="cap-in" data-f="rounds_played" data-s="'+esc(st.student_id)+'" type="number" min="0" style="width:64px;" value="'+esc(c.rounds_played!==null&&c.rounds_played!==undefined?c.rounds_played:'')+'"></td>'+
-          '<td><input class="cap-in" data-f="sim_score" data-s="'+esc(st.student_id)+'" type="number" min="0" max="100" step="0.1" style="width:74px;" value="'+esc(c.sim_score!==null&&c.sim_score!==undefined?c.sim_score:'')+'"></td>'+
-          '<td><input class="cap-in" data-f="sim_rank" data-s="'+esc(st.student_id)+'" type="number" min="1" style="width:64px;" value="'+esc(c.sim_rank!==null&&c.sim_rank!==undefined?c.sim_rank:'')+'"></td>'+
+          '<td>'+(c.team_name?esc(c.team_name):'<span style="font-size:12px;color:var(--text-subtle);">'+(linked?'no team':'—')+'</span>')+'</td>'+
+          '<td>'+(c.sim_points!==null&&c.sim_points!==undefined?Math.round(Number(c.sim_points)):'—')+'</td>'+
+          '<td>'+(c.sim_rank?('#'+c.sim_rank+(c.sim_teams?'/'+c.sim_teams:'')):'—')+'</td>'+
+          '<td style="white-space:nowrap;"><input class="cap-in" data-f="sim_score" data-s="'+esc(st.student_id)+'" data-orig="'+esc(c.sim_score!==null&&c.sim_score!==undefined?c.sim_score:'')+'" type="number" min="0" max="100" step="0.1" style="width:74px;" value="'+esc(c.sim_score!==null&&c.sim_score!==undefined?c.sim_score:'')+'">'+simTag+'</td>'+
           '<td>'+(memoLen
               ? '<button class="btn btn-ghost btn-sm" data-memo="'+esc(st.student_id)+'">Read ('+memoLen+' chars)</button>'
               : '<span style="font-size:12px;color:var(--text-subtle);">not submitted</span>')+'</td>'+
           '<td><input class="cap-in" data-f="rubric_score" data-s="'+esc(st.student_id)+'" type="number" min="0" max="100" step="0.1" style="width:74px;" value="'+esc(c.rubric_score!==null&&c.rubric_score!==undefined?c.rubric_score:'')+'"></td>'+
           '<td id="cap-tot-'+esc(st.student_id)+'"><b>'+(sc===null?'—':pct(sc))+'</b></td>'+
-          '<td><button class="btn btn-primary btn-sm" data-capsave="'+esc(st.student_id)+'">Save</button></td>'+
+          '<td style="white-space:nowrap;"><button class="btn btn-primary btn-sm" data-capsave="'+esc(st.student_id)+'">Save</button>'+
+            (c.sim_override&&linked?' <button class="btn btn-ghost btn-sm" data-capauto="'+esc(st.student_id)+'">Use tournament</button>':'')+'</td>'+
         '</tr>'+
         '<tr id="cap-row-'+esc(st.student_id)+'" class="hidden"><td colspan="9">'+
           '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:12px;">'+
             '<div style="font-size:12.5px;color:var(--text-muted);white-space:pre-wrap;max-height:320px;overflow:auto;">'+esc(c.memo_text||'')+'</div>'+
+            capRoundsTable(c.sim_history)+
             '<div class="field" style="margin-top:12px;"><label for="cap-fb-'+esc(st.student_id)+'">Feedback to the student</label>'+
               '<textarea id="cap-fb-'+esc(st.student_id)+'" rows="3">'+esc(c.rubric_feedback||'')+'</textarea></div>'+
           '</div></td></tr>';
@@ -6657,9 +6835,11 @@ function renderCapstone(host){
       var share=Number($('capShare').value);
       if(isNaN(share)||share<0||share>100){ e.className='msg err'; e.textContent='Simulation share must be between 0 and 100.'; return; }
       var url=$('capUrl').value.trim();
-      if(url && url.indexOf('http')!==0){ e.className='msg err'; e.textContent='The tournament link must start with http:// or https://'; return; }
+      if(url && url.indexOf('http')!==0){ e.className='msg err'; e.textContent='The fallback link must start with http:// or https://'; return; }
       saveCfg.disabled=true;
       var rec={ course_id:courseId, sim_share:share,
+                tournament_id:$('capTour').value||null,
+                score_method:$('capMethod').value==='points'?'points':'relative',
                 tournament_url:url||'https://macronations.com/',
                 instructions:$('capInstr').value.trim()||null,
                 opens_at:$('capOpens').value?new Date($('capOpens').value).toISOString():null,
@@ -6667,9 +6847,18 @@ function renderCapstone(host){
       sb.from('ma_capstone_config').upsert(rec,{ onConflict:'course_id' }).then(function(res){
         saveCfg.disabled=false;
         if(res.error){ e.className='msg err'; e.textContent=res.error.message; return; }
-        e.className='msg ok'; e.textContent='Saved.';
+        e.className='msg ok'; e.textContent='Saved.'+(rec.tournament_id?' Pulling standings…':'');
+        renderCapstone(host);   // re-renders with the fresh link and standings
       });
     }); }
+
+    var syncBtn=$('capSyncNow');
+    if(syncBtn){ syncBtn.addEventListener('click', function(){
+      syncBtn.disabled=true; syncBtn.textContent='Refreshing…';
+      capstoneSync(courseId).then(function(){ renderCapstone(host); });
+    }); }
+    var og=$('capOpenGest');
+    if(og){ og.addEventListener('click', function(){ openGestTournament(courseId, cfg.tournament_url, og); }); }
 
     Array.prototype.forEach.call(host.querySelectorAll('[data-memo]'), function(b){
       b.addEventListener('click', function(){
@@ -6680,22 +6869,43 @@ function renderCapstone(host){
       });
     });
 
+    Array.prototype.forEach.call(host.querySelectorAll('[data-capauto]'), function(b){
+      b.addEventListener('click', function(){
+        var sid=b.getAttribute('data-capauto'), e=$('capRowMsg');
+        b.disabled=true;
+        sb.from('ma_capstone').update({ sim_override:false, sim_source:'tournament' })
+          .eq('course_id',courseId).eq('student_id',sid).then(function(res){
+            if(res.error){ b.disabled=false; e.className='msg err'; e.textContent=res.error.message; return; }
+            capstoneSync(courseId).then(function(){ renderCapstone(host); });
+          });
+      });
+    });
+
     Array.prototype.forEach.call(host.querySelectorAll('[data-capsave]'), function(b){
       b.addEventListener('click', function(){
         var sid=b.getAttribute('data-capsave'), e=$('capRowMsg');
+        var c=byStu[sid]||{};
         var rec={ course_id:courseId, student_id:sid };
         var bad=null;
         Array.prototype.forEach.call(host.querySelectorAll('[data-s="'+sid+'"]'), function(inp){
           var f=inp.getAttribute('data-f'), v=inp.value.trim();
+          if(f==='sim_score'){
+            // Only a CHANGED sim % is an override; saving a memo grade must not
+            // freeze a tournament-fed score.
+            if(v===String(inp.getAttribute('data-orig')||'')){ return; }
+            if(v===''){ rec.sim_score=null; rec.sim_override=false; return; }
+            var ns=Number(v);
+            if(isNaN(ns)||ns<0||ns>100){ bad='Sim % must be 0-100'; return; }
+            rec.sim_score=ns;
+            if(linked){ rec.sim_override=true; rec.sim_source='manual'; }
+            return;
+          }
           if(v===''){ rec[f]=null; return; }
-          if(inp.type==='number'){
-            var n=Number(v);
-            if(isNaN(n)){ bad=f; return; }
-            if((f==='sim_score'||f==='rubric_score') && (n<0||n>100)){ bad=f+' must be 0-100'; return; }
-            rec[f]=n;
-          } else { rec[f]=v; }
+          var n=Number(v);
+          if(isNaN(n)||n<0||n>100){ bad=f+' must be 0-100'; return; }
+          rec[f]=n;
         });
-        if(bad){ e.className='msg err'; e.textContent='Check the '+bad+' value.'; return; }
+        if(bad){ e.className='msg err'; e.textContent='Check the value: '+bad+'.'; return; }
         var fb=$('cap-fb-'+sid);
         if(fb){ rec.rubric_feedback=fb.value.trim()||null; }
         // graded_at is what moves the memo out of the student's "awaiting
@@ -6709,8 +6919,11 @@ function renderCapstone(host){
           b.disabled=false;
           if(res.error){ e.className='msg err'; e.textContent=res.error.message; return; }
           e.className='msg ok'; e.textContent='Saved.';
+          var merged={}; Object.keys(c).forEach(function(k){ merged[k]=c[k]; }); Object.keys(rec).forEach(function(k){ merged[k]=rec[k]; });
+          byStu[sid]=merged;
           var cell=$('cap-tot-'+sid);
-          if(cell){ var sc=capstoneScore(rec,cfg); cell.innerHTML='<b>'+(sc===null?'—':pct(sc))+'</b>'; }
+          if(cell){ var sc=capstoneScore(merged,cfg); cell.innerHTML='<b>'+(sc===null?'—':pct(sc))+'</b>'; }
+          if(rec.sim_override){ renderCapstone(host); }
         });
       });
     });
@@ -6737,17 +6950,18 @@ function computeWeightedGrade(callback){
   var uid = State.user ? State.user.id : null;
   var courseId = State.payCourseId || State.selfCourseId;
   if (!uid || !courseId) { callback(null); return; }
-  Promise.all([
+  // pull the latest tournament standing into ma_capstone before reading it
+  capstoneSync(courseId).then(function(){ return Promise.all([
     sb.from('ma_course').select('id,title,owner_id,weight_reading,weight_quizzes,weight_arenas,weight_midterm,weight_final,weight_attendance,weight_capstone,att_presence_share').eq('id', courseId).maybeSingle(),
     sb.from('ma_chapter_progress').select('chapter,reading_done,quiz_passed,quiz_score').eq('student_id', uid).eq('course_id', courseId),
-    sb.from('ma_attempt').select('arena_slug,is_correct,score_pct,attempt_no,created_at').eq('user_id', uid).eq('course_id', courseId),
+    sb.from('ma_attempt').select('arena_slug,is_correct,score_pct,attempt_no,created_at').eq('user_id', uid).or('course_id.eq.'+courseId+',course_id.is.null'),
     sb.from('ma_exam').select('id,kind,title,total_points,item_ids,weight,attempt_scoring').eq('course_id', courseId).eq('is_published', true),
     sb.from('ma_attendance_session').select('id,quiz_points,base_points,open_at,created_at').eq('course_id', courseId),
     sb.from('ma_attendance_checkin').select('session_id,present,quiz_score').eq('user_id', uid),
     sb.from('ma_enrollment').select('created_at').eq('course_id', courseId).eq('user_id', uid).maybeSingle(),
     sb.from('ma_capstone').select('sim_score,rubric_score').eq('course_id', courseId).eq('student_id', uid).maybeSingle(),
     sb.from('ma_capstone_config').select('sim_share').eq('course_id', courseId).maybeSingle()
-  ]).then(function(r){
+  ]); }).then(function(r){
     var course = r[0].data; if (!course) { callback(null); return; }
     var prog = r[1].data ? r[1].data : [];
     var arenas = r[2].data ? r[2].data : [];
@@ -6828,7 +7042,7 @@ function computeWeightedGrade(callback){
 
 function loadMyGradesDetail(host, summary){
   var uid=State.user.id;
-  sb.from('ma_enrollment').select('course_id').eq('student_id',uid).eq('status','active').then(function(en){
+  sb.from('ma_enrollment').select('course_id').eq('student_id',uid).in('status',['active','comped']).then(function(en){
     var courseIds=(en.data?en.data:[]).map(function(x){ return x.course_id; });
     if(courseIds.length===0){ host.innerHTML=(summary?gradeSummaryCard(summary):'')+'<div class="card empty">No graded work yet. When you take exams or submit assignments, your grades appear here.</div>'; return; }
     Promise.all([
@@ -6938,8 +7152,8 @@ function gradeItemBreakdownCards(summary){
   html+='<div class="card" style="margin-bottom:16px;"><h3 style="font-size:15px;margin-bottom:10px;">Arenas</h3>';
   if(!arenas || arenas.length===0){ html+='<div style="font-size:13px;color:var(--text-subtle);">No arenas played yet.</div>'; }
   else {
-    html+='<table class="data-table"><caption class="sr-only">Arena scores</caption><thead><tr><th scope="col">Arena</th><th scope="col">Score</th><th scope="col">Cases</th></tr></thead><tbody>';
-    arenas.forEach(function(a){ html+='<tr><th scope="row" style="font-weight:500;">'+esc(a.title)+'</th><td><b>'+Math.round(a.pct*100)+'%</b></td><td style="color:var(--text-subtle);">'+a.correct+' / '+a.total+'</td></tr>'; });
+    html+='<table class="data-table"><caption class="sr-only">Arena scores</caption><thead><tr><th scope="col">Arena</th><th scope="col">Score</th><th scope="col">Runs</th></tr></thead><tbody>';
+    arenas.forEach(function(a){ html+='<tr><th scope="row" style="font-weight:500;">'+esc(a.title)+'</th><td><b>'+Math.round(a.pct*100)+'%</b></td><td style="color:var(--text-subtle);">'+a.runs+(a.runs>ARENA_MAX_ATTEMPTS?' (first '+ARENA_MAX_ATTEMPTS+' count)':'')+'</td></tr>'; });
     html+='</tbody></table>';
   }
   html+='</div>';
@@ -7089,7 +7303,7 @@ function loadMyExams() {
   // empty through PostgREST even though the row exists -- which showed the
   // student "not enrolled" despite a valid active enrollment. We fetch the row
   // plainly, then look up course titles in a second query.
-  sb.from('ma_enrollment').select('course_id,student_id,user_id,status').eq('student_id', uid).eq('status','active').then(function(enr) {
+  sb.from('ma_enrollment').select('course_id,student_id,user_id,status').eq('student_id', uid).in('status',['active','comped']).then(function(enr) {
     var rows = enr.data ? enr.data : [];
     var courseIds = rows.map(function(r){ return r.course_id; });
     if (courseIds.length === 0) { host.innerHTML = '<div class="card empty">You are not enrolled in a course with exams yet. Join a course from Home.</div>'; return; }
@@ -7561,6 +7775,7 @@ function gradeExam(auto) {
 
 function loadProgress() {
   if (!State.user) { return; }
+  try { renderProgressCapstone(); } catch (e) {}
   var uid = State.user.id;
   // the student's course (for per-arena review-open checks); may be null
   var courseId = State.payCourseId || State.selfCourseId || State.currentCourseId || null;
@@ -7594,7 +7809,7 @@ function loadProgress() {
   // ma_review_open(course,'arena',<slug>) encodes that rule; we call it once per
   // arena the student has played.
   sb.from('ma_attempt')
-    .select('arena_slug, is_correct, created_at, attempt_no, case_index, prompt_text, chosen_label, correct_label')
+    .select('arena_slug, is_correct, score_pct, created_at, attempt_no, case_index, prompt_text, chosen_label, correct_label')
     .eq('user_id', uid).order('created_at', { ascending: false }).limit(2000)
     .then(function(res) {
       var rows = res.data ? res.data : [];
@@ -7627,7 +7842,7 @@ function loadProgress() {
             bd.map(function(a){
               return '<div class="arena-sum-row" data-arena="'+esc(a.slug)+'" style="display:flex;justify-content:space-between;gap:12px;padding:4px 0;border-bottom:1px solid var(--border);">'+
                 '<span>'+esc(a.title)+'</span>'+
-                '<span class="mono"><b>'+Math.round(a.pct*100)+'%</b> <span style="color:var(--text-subtle);">('+a.correct+'/'+a.total+')</span></span></div>';
+                '<span class="mono"><b>'+Math.round(a.pct*100)+'%</b> <span style="color:var(--text-subtle);">('+a.runs+' run'+(a.runs===1?'':'s')+')</span></span></div>';
             }).join('')+'</div>';
         } else { summaryHost.innerHTML = ''; }
       }
@@ -7650,9 +7865,15 @@ function loadProgress() {
           if (filter && filter !== '__all' && r.arena_slug !== filter) { return; }
           var t = ARENA_TITLE[r.arena_slug] ? ARENA_TITLE[r.arena_slug] : r.arena_slug;
           var when = r.created_at ? new Date(r.created_at).toLocaleString() : '';
-          var result = r.is_correct ? '<span class="tag green">correct</span>' : '<span class="tag rose">incorrect</span>';
+          var isRun = r.score_pct !== null && r.score_pct !== undefined;
+          var result = isRun
+            ? ('<b>' + (Math.round(Number(r.score_pct) * 1000) / 10) + '%</b> <span style="color:var(--text-subtle);font-size:12px;">run ' +
+               esc(String(r.attempt_no || 1)) + (Number(r.attempt_no || 1) > ARENA_MAX_ATTEMPTS ? ' · practice' : '') + '</span>')
+            : (r.is_correct ? '<span class="tag green">correct</span>' : '<span class="tag rose">incorrect</span>');
           var reviewCell = '';
-          if (!r.is_correct && r.prompt_text && reviewOpen(r.arena_slug)) {
+          if (isRun) {
+            // a simulation run has no single right answer to review; replay it instead
+          } else if (!r.is_correct && r.prompt_text && reviewOpen(r.arena_slug)) {
             var rk = 'rv' + (reviewIdx++);
             reviewStore[rk] = r;
             reviewCell = '<button class="btn btn-ghost btn-sm" data-arenareview="'+rk+'">Review</button>';
@@ -7775,17 +7996,17 @@ function loadCompletion() {
   var courseId = State.payCourseId || State.selfCourseId;
   if (!courseId) { host.innerHTML = ''; return; }
 
-  Promise.all([
+  capstoneSync(courseId).then(function(){ return Promise.all([
     sb.from('ma_course').select('id,title,owner_id,weight_reading,weight_quizzes,weight_arenas,weight_midterm,weight_final,weight_attendance,weight_capstone,att_presence_share').eq('id', courseId).maybeSingle(),
     sb.from('ma_chapter_progress').select('chapter,reading_done,quiz_passed,quiz_score').eq('student_id', uid).eq('course_id', courseId),
-    sb.from('ma_attempt').select('arena_slug,is_correct,score_pct,attempt_no,created_at').eq('user_id', uid).eq('course_id', courseId),
+    sb.from('ma_attempt').select('arena_slug,is_correct,score_pct,attempt_no,created_at').eq('user_id', uid).or('course_id.eq.'+courseId+',course_id.is.null'),
     sb.from('ma_exam').select('id,kind,title,total_points,item_ids,weight,attempt_scoring').eq('course_id', courseId).eq('is_published', true),
     sb.from('ma_attendance_session').select('id,quiz_points,base_points,open_at,created_at').eq('course_id', courseId),
     sb.from('ma_attendance_checkin').select('session_id,present,quiz_score').eq('user_id', uid),
     sb.from('ma_enrollment').select('created_at').eq('course_id', courseId).eq('user_id', uid).maybeSingle(),
     sb.from('ma_capstone').select('sim_score,rubric_score').eq('course_id', courseId).eq('student_id', uid).maybeSingle(),
     sb.from('ma_capstone_config').select('sim_share').eq('course_id', courseId).maybeSingle()
-  ]).then(function(r) {
+  ]); }).then(function(r) {
     var course = r[0].data; if (!course) { host.innerHTML=''; return; }
     var prog = r[1].data ? r[1].data : [];
     var arenas = r[2].data ? r[2].data : [];
