@@ -683,6 +683,198 @@ function fnError(res, cb){
     }, function(){ cb(basic, status); });
   } else { cb(basic, status); }
 }
+/* ====================================================================
+   DUE-TO-DATE LETTER GRADES
+   --------------------------------------------------------------------
+   An item counts toward the letter as soon as its DEADLINE HAS PASSED.
+   Work not done by then is a zero; work not yet due is not in the
+   denominator at all. Every student in a section is therefore marked
+   out of the SAME total, and the letter answers "how are they doing on
+   everything that was due?" rather than "how did they do on whichever
+   bits they chose to do?"
+
+   Deadline per component in this course:
+     reading ch.n / quiz ch.n     ma_quiz_deadline.closes_at for chapter n
+                                  (no separate reading deadline here, so the
+                                  chapter's quiz deadline governs its reading)
+     arena                        ma_arena_deadline.closes_at
+     attendance session           ma_attendance_session.close_at
+     GEST capstone                ma_capstone_config.closes_at
+     exam                         ma_exam.closes_at
+   Assignments carry no weight in this course, so they stay out of the letter.
+   An exam ALSO counts for a student who already has a graded score on
+   it, because a paper exam normally carries no close date and real
+   graded work must never be discarded. To score the students who missed
+   a paper exam, enter 0 for them (or set the exam's close date) and
+   they are marked on it like everyone else.
+
+   A component with nothing due yet drops out and the remaining weights
+   renormalize, exactly as the weighted total does. Nothing is stored:
+   this is a derived display, and a manual Override still replaces it.
+   ==================================================================== */
+function dueBefore(ts, nowMs){
+  if(ts===null || ts===undefined || ts===''){ return false; }
+  var t=new Date(ts).getTime();
+  if(isNaN(t)){ return false; }
+  return t <= nowMs;
+}
+/* Chapters whose deadline has passed. Empty when the course has set no
+   deadlines -- that component then drops out of the letter. */
+function dueChapters(deadlineRows, nowMs){
+  var out=[];
+  (deadlineRows||[]).forEach(function(d){
+    if(d && d.chapter!==null && d.chapter!==undefined && dueBefore(d.closes_at, nowMs)){ out.push(Number(d.chapter)); }
+  });
+  return out;
+}
+function dueArenaSlugs(deadlineRows, nowMs){
+  var out=[];
+  (deadlineRows||[]).forEach(function(d){
+    if(d && d.arena_slug && dueBefore(d.closes_at, nowMs)){ out.push(d.arena_slug); }
+  });
+  return out;
+}
+/* Weighted average over the components that have something due. Each part
+   is { key, w:weight, n:size of the due set, earned:sum over that set }.
+   Returns null when nothing is due yet. */
+function dueWeightedPct(parts){
+  var w=0, s=0;
+  (parts||[]).forEach(function(p){
+    if(!p || !(p.w>0) || !(p.n>0)){ return; }
+    var frac=p.earned/p.n;
+    if(isNaN(frac) || frac<0){ frac=0; }
+    if(frac>1){ frac=1; }
+    w+=p.w; s+=frac*p.w;
+  });
+  return w>0 ? s/w : null;
+}
+/* A set lookup that tolerates string/number chapter keys. */
+function dueSetOf(list){ var m={}; (list||[]).forEach(function(x){ m[x]=true; }); return m; }
+
+/* ---- the grade scale (per course, falling back to the standard one) ---- */
+var DEFAULT_GRADE_SCALE = [
+  {min:93,letter:"A"},{min:90,letter:"A-"},{min:87,letter:"B+"},{min:83,letter:"B"},
+  {min:80,letter:"B-"},{min:77,letter:"C+"},{min:73,letter:"C"},{min:70,letter:"C-"},
+  {min:67,letter:"D+"},{min:63,letter:"D"},{min:60,letter:"D-"},{min:0,letter:"F"}
+];
+function effectiveGradeScale(c){
+  var sc = c && c.grade_scale;
+  if(!sc || !sc.length){ return DEFAULT_GRADE_SCALE; }
+  var arr=[];
+  for(var i=0;i<sc.length;i++){
+    if(sc[i] && sc[i].letter!==undefined && sc[i].letter!=='' && !isNaN(Number(sc[i].min))){
+      arr.push({ min:Number(sc[i].min), letter:String(sc[i].letter) });
+    }
+  }
+  if(!arr.length){ return DEFAULT_GRADE_SCALE; }
+  arr.sort(function(a,b){ return b.min - a.min; });
+  return arr;
+}
+function letterForPct(pct, scale){
+  if(pct===null||pct===undefined||isNaN(Number(pct))){ return "—"; }
+  scale = (scale && scale.length) ? scale : DEFAULT_GRADE_SCALE;
+  for(var i=0;i<scale.length;i++){ if(Number(pct) >= Number(scale[i].min)){ return scale[i].letter; } }
+  return scale[scale.length-1].letter;
+}
+/* Instructor: edit the per-course grade scale. Needs the grade_scale column
+   (ma_grade_scale.sql); until that is applied, saving reports it plainly and
+   every course falls back to the standard scale above. */
+function openGradeScaleEditor(c, onSaved){
+  var scale = effectiveGradeScale(c).slice();
+  var m=document.createElement('div'); m.className='modal-bg';
+  function rowsHtml(){
+    var h='';
+    for(var i=0;i<scale.length;i++){
+      h+='<div class="row2" data-gsrow="'+i+'" style="gap:8px;align-items:flex-end;margin-bottom:6px;">'+
+        '<div class="field" style="margin:0;width:100px;"><label>Letter</label><input class="gsL" value="'+esc(scale[i].letter)+'"></div>'+
+        '<div class="field" style="margin:0;width:130px;"><label>Min %</label><input class="gsM" type="number" min="0" max="100" step="0.1" value="'+esc(String(scale[i].min))+'"></div>'+
+        '<button class="btn btn-ghost btn-sm gsDel" type="button">Remove</button></div>';
+    }
+    return h;
+  }
+  m.innerHTML='<div class="modal" style="max-width:460px;"><h2>Grade scale</h2>'+
+    '<div style="font-size:12.5px;color:var(--text-muted);margin-bottom:12px;">Letter grades are assigned automatically from each student’s <b>To date</b> percentage — their score on everything whose deadline has passed — as the highest letter whose <b>Min %</b> they meet. Applies to <b>'+esc(c.title||'this course')+'</b>.</div>'+
+    '<div id="gsRows">'+rowsHtml()+'</div>'+
+    '<div class="inline-actions" style="margin-top:6px;gap:8px;"><button class="btn btn-ghost btn-sm" id="gsAdd" type="button">+ Add band</button><button class="btn btn-ghost btn-sm" id="gsReset" type="button">Reset to default</button></div>'+
+    '<div id="gsMsg" class="msg"></div>'+
+    '<div class="inline-actions" style="justify-content:flex-end;margin-top:10px;"><button class="btn btn-ghost" id="gsCancel">Cancel</button><button class="btn btn-primary" id="gsSave">Save scale</button></div></div>';
+  document.body.appendChild(m);
+  function close(){ if(m.parentNode){ m.parentNode.removeChild(m); } }
+  function readRows(){
+    var out=[]; Array.prototype.forEach.call(m.querySelectorAll('[data-gsrow]'), function(rw){
+      var L=rw.querySelector('.gsL').value.trim(); var Mv=rw.querySelector('.gsM').value;
+      if(L!=='' && Mv!==''){ out.push({ letter:L, min:Number(Mv) }); }
+    });
+    return out;
+  }
+  function rebind(){
+    Array.prototype.forEach.call(m.querySelectorAll('.gsDel'), function(b){
+      b.addEventListener('click', function(){ scale=readRows(); var idx=parseInt(b.parentNode.getAttribute('data-gsrow'),10); scale.splice(idx,1); m.querySelector('#gsRows').innerHTML=rowsHtml(); rebind(); });
+    });
+  }
+  rebind();
+  m.querySelector('#gsCancel').addEventListener('click', close);
+  m.addEventListener('click', function(e){ if(e.target===m){ close(); } });
+  m.querySelector('#gsAdd').addEventListener('click', function(){ scale=readRows(); scale.push({letter:'',min:0}); m.querySelector('#gsRows').innerHTML=rowsHtml(); rebind(); });
+  m.querySelector('#gsReset').addEventListener('click', function(){ scale=DEFAULT_GRADE_SCALE.slice(); m.querySelector('#gsRows').innerHTML=rowsHtml(); rebind(); });
+  m.querySelector('#gsSave').addEventListener('click', function(){
+    var arr=readRows(); var msg=m.querySelector('#gsMsg'); var btn=m.querySelector('#gsSave');
+    if(arr.length===0){ msg.className='msg err'; msg.textContent='Add at least one grade band.'; return; }
+    for(var i=0;i<arr.length;i++){ if(isNaN(arr[i].min)||arr[i].min<0||arr[i].min>100){ msg.className='msg err'; msg.textContent='Each Min % must be between 0 and 100.'; return; } }
+    arr.sort(function(a,b){ return b.min-a.min; });
+    btn.disabled=true;
+    sb.from('ma_course').update({ grade_scale: arr }).eq('id', c.id).then(function(res){
+      btn.disabled=false;
+      if(res.error){
+        msg.className='msg err';
+        msg.textContent=(String(res.error.message||'').toLowerCase().indexOf('grade_scale')>=0
+          ? 'Custom grade scales are not installed on this course yet — run ma_grade_scale.sql, then reopen this window. Until then every course uses the standard scale shown here.'
+          : res.error.message);
+        return;
+      }
+      c.grade_scale = arr;
+      close();
+      if(typeof onSaved==='function'){ onSaved(); }
+    }, function(){ btn.disabled=false; msg.className='msg err'; msg.textContent='Could not save the scale.'; });
+  });
+}
+/* The audit trail behind one student's letter: every item that was due, what
+   they earned on it, and how it was weighted. This is what you show a student
+   who queries their letter grade. */
+function openLetterBasis(studentName, g, scale){
+  var parts=(g && g.dueParts)?g.dueParts.filter(function(x){ return x.w>0 && x.n>0; }):[];
+  var dw=parts.reduce(function(s,x){ return s+x.w; },0);
+  var m=document.createElement('div'); m.className='modal-bg';
+  var h='<div class="modal" style="max-width:640px;"><h3 style="margin-bottom:4px;">Letter grade — '+esc(studentName||'student')+'</h3>'+
+    '<p style="font-size:12.5px;color:var(--text-muted);margin-bottom:12px;">Performance on everything whose deadline has passed. The “out of” column is the same for every student in the section, so work not done counts as 0. Items not yet due are left out entirely.</p>';
+  if(!parts.length){
+    h+='<div class="card empty" style="margin-top:0;">Nothing is due yet in this course, so there is no letter grade to show.</div>';
+  } else {
+    h+='<table class="data-table"><thead><tr><th scope="col">Component</th><th scope="col">Earned</th><th scope="col">Out of</th><th scope="col">Score</th><th scope="col">Weight</th><th scope="col">Contribution</th></tr></thead><tbody>';
+    parts.forEach(function(x){
+      var fr=x.n>0?(x.earned/x.n):0; if(isNaN(fr)||fr<0){fr=0;} if(fr>1){fr=1;}
+      var eff=dw>0?(x.w/dw):0;
+      h+='<tr><th scope="row" style="font-weight:400;">'+esc(x.key)+'</th>'+
+        '<td>'+(Math.round(x.earned*100)/100)+'</td><td>'+(Math.round(x.n*100)/100)+'</td>'+
+        '<td>'+(Math.round(fr*1000)/10)+'%</td><td>'+Math.round(eff*1000)/10+'%</td>'+
+        '<td>'+Math.round(fr*eff*1000)/10+'%</td></tr>';
+    });
+    h+='</tbody><tfoot><tr><th scope="row" style="font-weight:700;">To date</th><td></td><td></td><td></td><td></td>'+
+      '<td style="font-weight:800;">'+((g.duePct===null||g.duePct===undefined)?'—':(Math.round(g.duePct*1000)/10+'%'))+'</td></tr>'+
+      '<tr><th scope="row" style="font-weight:700;">Letter</th><td></td><td></td><td></td><td></td>'+
+      '<td style="font-weight:800;">'+((g.letterBasis===null||g.letterBasis===undefined)?'—':esc(letterForPct(g.letterBasis*100, scale)))+
+      (g.override?' <span class="tag violet" title="a manual override replaces the due-to-date total">ovr</span>':'')+'</td></tr></tfoot></table>';
+    if(g.override){
+      h+='<div style="font-size:11.5px;color:var(--text-subtle);margin-top:6px;">A manual override of '+esc(String(g.override.pct))+'% is set for this student, so the letter comes from that rather than from the total above.</div>';
+    }
+  }
+  h+='<div class="inline-actions" style="margin-top:12px;justify-content:flex-end;"><button class="btn btn-ghost btn-sm" id="lbClose">Close</button></div></div>';
+  m.innerHTML=h;
+  document.body.appendChild(m);
+  function shut(){ if(m.parentNode){ m.parentNode.removeChild(m); } }
+  m.querySelector('#lbClose').addEventListener('click', shut);
+  m.addEventListener('click', function(e){ if(e.target===m){ shut(); } });
+}
 function pct(x){ if(x===null||x===undefined||isNaN(x)){return '0%';} return Math.round(x*100)+'%'; }
 function money(cents,cur){ var c=(cents?cents:0)/100; var sym=(cur==='usd'||!cur)?'$':''; return sym+c.toFixed(2)+(sym?'':' '+(cur?cur.toUpperCase():'')); }
 function show(el){ if(el){el.classList.remove('hidden');} }
@@ -1924,8 +2116,8 @@ function renderGradebook(host){
   // shows the same standing the student sees on My Grades.
   withTimeout(capstoneSync(State.teachCourseId).then(function(){ return Promise.all([
     sb.from('ma_gradebook_v').select('*').eq('course_id',State.teachCourseId),
-    sb.from('ma_exam').select('id,kind,total_points,item_ids,is_published,attempt_scoring').eq('course_id',State.teachCourseId).eq('is_published',true),
-    sb.from('ma_capstone_config').select('sim_share').eq('course_id',State.teachCourseId).maybeSingle()
+    sb.from('ma_exam').select('id,kind,title,total_points,item_ids,is_published,attempt_scoring,weight,closes_at').eq('course_id',State.teachCourseId).eq('is_published',true),
+    sb.from('ma_capstone_config').select('sim_share,closes_at').eq('course_id',State.teachCourseId).maybeSingle()
   ]); }), 'the gradebook view', 20000).then(function(r){
     State.gbCapCfg = (r[2] && r[2].data) ? r[2].data : null;
     if(r[0] && r[0].error){ host.innerHTML='<div class="card empty">The gradebook list could not load: '+esc(r[0].error.message)+'</div>'; return; }
@@ -1993,15 +2185,42 @@ function renderGradebook(host){
         });
       });
       // assignment averages + manual overrides + arena performance
+      // Per-chapter rows for the course. ma_gradebook_v returns course-wide
+      // TOTALS, which cannot be narrowed to the chapters whose deadline has
+      // passed -- and that narrowing is what makes the letter comparable
+      // between students. Paged, like the exam attempts above.
+      function fetchAllChapterProgress(){
+        var all=[], PAGE=1000;
+        function page(from){
+          return sb.from('ma_chapter_progress')
+            .select('student_id,chapter,reading_done,quiz_score')
+            .eq('course_id',State.teachCourseId)
+            .order('student_id',{ascending:true})
+            .range(from, from+PAGE-1)
+            .then(function(res){
+              if(res && res.error){ return { data: all, error: res.error }; }
+              var got=(res && res.data)?res.data:[];
+              all=all.concat(got);
+              if(got.length < PAGE){ return { data: all }; }
+              if(from > 500000){ return { data: all }; }
+              return page(from + PAGE);
+            });
+        }
+        return page(0);
+      }
       withTimeout(Promise.all([
         sb.from('ma_assignment').select('id,points').eq('course_id',State.teachCourseId).eq('is_published',true),
         sb.from('ma_submission').select('assignment_id,student_id,score').eq('course_id',State.teachCourseId),
         sb.from('ma_grade_override').select('student_id,override_pct,note').eq('course_id',State.teachCourseId),
         sb.from('ma_attempt').select('user_id,arena_slug,is_correct,score_pct,attempt_no,created_at').or('course_id.eq.'+State.teachCourseId+',course_id.is.null'),
         sb.from('ma_bank_items').select('id,points').in('id', Object.keys(gbIdset)),
-        sb.from('ma_attendance_session').select('id,quiz_points,base_points,open_at,created_at').eq('course_id',State.teachCourseId),
+        sb.from('ma_attendance_session').select('id,quiz_points,base_points,open_at,close_at,created_at').eq('course_id',State.teachCourseId),
         sb.from('ma_attendance_checkin').select('session_id,user_id,present,quiz_score'),
-        sb.from('ma_enrollment').select('user_id,student_id,created_at').eq('course_id',State.teachCourseId)
+        sb.from('ma_enrollment').select('user_id,student_id,created_at').eq('course_id',State.teachCourseId),
+        sb.from('ma_quiz_deadline').select('chapter,closes_at').eq('course_id',State.teachCourseId),
+        sb.from('ma_arena_deadline').select('arena_slug,closes_at').eq('course_id',State.teachCourseId),
+        fetchAllChapterProgress(),
+        sb.from('ma_capstone').select('student_id,sim_score,rubric_score').eq('course_id',State.teachCourseId)
       ]), 'assignments and arenas', 20000).then(function(ar){
         var aRows=ar[0].data?ar[0].data:[];
         var subs=ar[1].data?ar[1].data:[];
@@ -2067,7 +2286,53 @@ function renderGradebook(host){
         var enrAt={}; var enrRows=ar[7]&&ar[7].data?ar[7].data:[]; enrRows.forEach(function(e){ var t=e.created_at?new Date(e.created_at).getTime():NaN; if(!isNaN(t)){ if(e.user_id){ enrAt[e.user_id]=t; } if(e.student_id){ enrAt[e.student_id]=t; } } });
         var attScoreOf={};
         rows.forEach(function(rw){ var info=computeAttendanceScore(attSessions, ckByStu[rw.student_id]||[], c.att_presence_share, enrAt[rw.student_id]); attScoreOf[rw.student_id]= info?info.score:null; });
-        buildGradebook(host,c,weights,rows,gradedExams,examScore,asgScore,overrideOf,arenaScoreOf,examPossible,attScoreOf);
+        // ---- DUE-TO-DATE sets: one common denominator per component for the
+        // whole section, with work not done counted as 0. Reading borrows each
+        // chapter's quiz deadline (no separate reading deadline here).
+        var _now=Date.now();
+        var _dueCh=dueChapters(ar[8]&&ar[8].data?ar[8].data:[], _now);
+        var _dueAr=dueArenaSlugs(ar[9]&&ar[9].data?ar[9].data:[], _now);
+        var _dueChSet=dueSetOf(_dueCh), _dueArSet=dueSetOf(_dueAr);
+        var dueRead={}, dueQuiz={};
+        (ar[10]&&ar[10].data?ar[10].data:[]).forEach(function(p){
+          if(!_dueChSet[Number(p.chapter)]){ return; }
+          if(dueRead[p.student_id]===undefined){ dueRead[p.student_id]=0; dueQuiz[p.student_id]=0; }
+          if(p.reading_done){ dueRead[p.student_id]+=1; }
+          var qs=(p.quiz_score!==null&&p.quiz_score!==undefined)?Number(p.quiz_score):0;
+          if(isNaN(qs)||qs<0){ qs=0; } if(qs>1){ qs=1; }
+          dueQuiz[p.student_id]+=qs;
+        });
+        var dueArenaPts={};
+        arenaRows.forEach(function(x){
+          if(!_dueArSet[x.arena_slug]){ return; }
+          if(dueArenaPts[x.student_id]===undefined){ dueArenaPts[x.student_id]=0; }
+          var sc=Number(x.score); if(isNaN(sc)||sc<0){ sc=0; } if(sc>1){ sc=1; }
+          dueArenaPts[x.student_id]+=sc;
+        });
+        // Only sessions whose check-in window has CLOSED are due, and a closed
+        // session with NOT ONE check-in in the section did not happen (a
+        // cancelled class, or one left over from setting the feature up):
+        // marking the whole section absent for it is never what was meant.
+        var _ckSessions={};
+        attAll.forEach(function(x){ if(x && x.session_id){ _ckSessions[x.session_id]=true; } });
+        var _dueSess=attSessions.filter(function(s){ return dueBefore(s.close_at, _now) && _ckSessions[s.id]===true; });
+        var dueAttOf={};
+        rows.forEach(function(rw){
+          var info=_dueSess.length ? computeAttendanceScore(_dueSess, ckByStu[rw.student_id]||[], c.att_presence_share, enrAt[rw.student_id]) : null;
+          dueAttOf[rw.student_id]= info?info.score:null;
+        });
+        // GEST capstone: due once its close date has passed, or as soon as a
+        // score is recorded for this student.
+        var _capCfg = State.gbCapCfg;
+        var _capDue = !!(_capCfg && dueBefore(_capCfg.closes_at, _now));
+        var dueCapOf={};
+        (ar[11]&&ar[11].data?ar[11].data:[]).forEach(function(x){
+          dueCapOf[x.student_id]=capstoneScore({ sim_score:x.sim_score, rubric_score:x.rubric_score }, _capCfg);
+        });
+        var due={ now:_now, chapters:_dueCh.length, arenas:_dueAr.length, sessions:_dueSess.length,
+                  read:dueRead, quiz:dueQuiz, arenaPts:dueArenaPts, att:dueAttOf,
+                  capDue:_capDue, cap:dueCapOf };
+        buildGradebook(host,c,weights,rows,gradedExams,examScore,asgScore,overrideOf,arenaScoreOf,examPossible,attScoreOf,due);
       }, function(err){
         host.innerHTML='<div class="card empty">Could not load parts of the gradebook ('+esc(String(err&&err.message?err.message:err))+'). Exam and quiz scores may still be shown \u2014 try reloading.</div>';
       });
@@ -2082,9 +2347,11 @@ function renderGradebook(host){
    during earlier work, which made the gradebook and roster crash.) */
 function subTag(s){ if(s==='active'){return '<span class="tag green">active</span>';} if(s==='pending'){return '<span class="tag amber">pending</span>';} if(s==='expired'){return '<span class="tag rose">expired</span>';} if(s==='comped'){return '<span class="tag violet">comped</span>';} return '<span class="tag dim">'+esc(s)+'</span>'; }
 
-function buildGradebook(host,c,weights,rows,gradedExams,examScore,asgScore,overrideOf,arenaScoreOf,examPossible,attScoreOf){
+function buildGradebook(host,c,weights,rows,gradedExams,examScore,asgScore,overrideOf,arenaScoreOf,examPossible,attScoreOf,due){
   try {
   asgScore = asgScore || {}; overrideOf = overrideOf || {}; arenaScoreOf = arenaScoreOf || {}; examPossible = examPossible || {}; attScoreOf = attScoreOf || {};
+  due = due || { now:Date.now(), chapters:0, arenas:0, sessions:0, read:{}, quiz:{}, arenaPts:{}, att:{}, capDue:false, cap:{} };
+  var gscale=effectiveGradeScale(c);
   if(rows.length===0){ host.innerHTML='<div class="card empty">No enrolled students yet. Share the join code <span class="pill-code">'+esc(c.join_code)+'</span> so students can join.</div>'; return; }
   // Effective point total for an exam (falls back to question count).
   function examPts(e){ if(!e){ return 0; } if(e.total_points && Number(e.total_points)>0){ return Number(e.total_points); } return (e.item_ids && e.item_ids.length) ? e.item_ids.length : 0; }
@@ -2126,13 +2393,40 @@ function buildGradebook(host,c,weights,rows,gradedExams,examScore,asgScore,overr
     var asg=(asgScore[r.student_id]!==undefined&&asgScore[r.student_id]!==null)?asgScore[r.student_id]:null;
     var ovr=overrideOf[r.student_id]?overrideOf[r.student_id]:null;
     var finalPct = ovr ? (Number(ovr.pct)/100) : total;
+    // ---- LETTER BASIS: performance on everything DUE SO FAR, each component
+    // scored over the whole due set, work not done counted as 0.
+    var dparts=[
+      { key:'Reading', w:weights.reading, n:due.chapters, earned:(due.read[r.student_id]||0) },
+      { key:'Quizzes', w:weights.quizzes, n:due.chapters, earned:(due.quiz[r.student_id]||0) },
+      { key:'Arenas',  w:weights.arenas,  n:due.arenas,   earned:(due.arenaPts[r.student_id]||0) }
+    ];
+    if(due.sessions>0 && due.att[r.student_id]!==null && due.att[r.student_id]!==undefined){
+      dparts.push({ key:'Attendance', w:weights.attendance, n:1, earned:due.att[r.student_id] });
+    }
+    // The capstone counts once its close date has passed, or as soon as a score
+    // is recorded for this student.
+    var _capScore=(due.cap[r.student_id]!==undefined)?due.cap[r.student_id]:null;
+    if(due.capDue || _capScore!==null){
+      dparts.push({ key:'GEST Capstone', w:weights.capstone, n:1, earned:(_capScore===null?0:_capScore) });
+    }
+    gradedExams.forEach(function(e){
+      var f=examScores[e.id];
+      var graded=(f!==null && f!==undefined);
+      // Past its close date, or already graded for this student (a paper exam
+      // carries no close date, and graded work is never discarded).
+      if(!(dueBefore(e.closes_at, due.now) || graded)){ return; }
+      dparts.push({ key:(e.title||(e.kind==='final'?'Final':'Midterm')), w:examWeight(e), n:1, earned:graded?f:0 });
+    });
+    var duePct = dueWeightedPct(dparts);
+    var letterBasis = ovr ? (Number(ovr.pct)/100) : duePct;
     return { sid:r.student_id, email:r.email, name:r.full_name, sub:r.sub_status, reading:reading, quizzes:quizzes, arenas:arenas, attendance:attend, capstone:cap,
       practice:(r.practice_attempts>0?r.practice_correct/r.practice_attempts:null),
-      examScores:examScores, assignments:asg, computed:total, override:ovr, finalPct:finalPct };
+      examScores:examScores, assignments:asg, computed:total, override:ovr, finalPct:finalPct,
+      duePct:duePct, dueParts:dparts, letterBasis:letterBasis };
   });
   var html='<div style="margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">'+
-    '<div style="font-size:12.5px;color:var(--text-muted);"><b>Grade on work completed so far.</b> The weighted total renormalizes over components that have data. <b>Assignments</b> are shown for reference; to fold them (or participation) into a student\u2019s final grade, use the <b>Override</b> column \u2014 an entered override becomes the Final grade and is what the CSV exports.</div>'+
-    '<button class="btn btn-ghost btn-sm" id="csvBtn">Export CSV</button></div>';
+    '<div style="font-size:12.5px;color:var(--text-muted);max-width:620px;"><b>To date</b> is the number the <b>Letter</b> comes from: performance on everything whose deadline has passed, with work not done counted as 0, so every student is marked out of the same total. Click a letter to see the items behind it. <b>Weighted</b> projects the whole course instead \u2014 work not yet due also counts as 0 there, so it stays low early in the term. <b>Assignments</b> are shown for reference; to fold them (or participation) into a student\u2019s final grade, use the <b>Override</b> column \u2014 an entered override becomes the Final grade, the Letter, and what the CSV exports.</div>'+
+    '<button class="btn btn-ghost btn-sm" id="gsBtn" title="Set the percentage cut-offs for each letter grade">Grade scale</button> <button class="btn btn-ghost btn-sm" id="csvBtn">Export CSV</button></div>';
   // build dynamic exam column headers (one per published exam)
   var examCols=gradedExams.map(function(e){
     var w=examWeight(e); var wpc=(w!==null&&w!==undefined)?(' '+Math.round(w*100)+'%'):'';
@@ -2151,7 +2445,7 @@ function buildGradebook(host,c,weights,rows,gradedExams,examScore,asgScore,overr
     return (Number(av)-Number(bv))*dir;
   });
   var examHeadHtml=examCols.map(function(col){ return '<th scope="col">'+col.label+'</th>'; }).join('');
-  html+='<div class="tbl-wrap"><table class="tbl"><thead><tr>'+sTh('Student','name')+'<th scope="col">Sub</th>'+sTh('Reading','reading')+sTh('Quizzes','quizzes')+sTh('Arenas','arenas')+sTh('Attend','attendance')+sTh('Capstone','capstone')+sTh('Assign','assignments')+examHeadHtml+sTh('Weighted','computed')+'<th scope="col">Override %</th>'+sTh('Final','finalPct')+'<th scope="col"></th></tr></thead><tbody>';
+  html+='<div class="tbl-wrap"><table class="tbl"><thead><tr>'+sTh('Student','name')+'<th scope="col">Sub</th>'+sTh('Reading','reading')+sTh('Quizzes','quizzes')+sTh('Arenas','arenas')+sTh('Attend','attendance')+sTh('Capstone','capstone')+sTh('Assign','assignments')+examHeadHtml+sTh('Weighted','computed')+sTh('To date','duePct')+'<th scope="col">Override %</th>'+sTh('Final','finalPct')+'<th scope="col" title="Auto letter from the grade scale">Letter</th><th scope="col"></th></tr></thead><tbody>';
   computed.forEach(function(g){
     var examCells=examCols.map(function(col){
       var f=g.examScores[col.id];
@@ -2164,8 +2458,10 @@ function buildGradebook(host,c,weights,rows,gradedExams,examScore,asgScore,overr
       '<td>'+(g.assignments===null?'<span class="tag dim">--</span>':pct(g.assignments))+'</td>'+
       examCells+
       '<td>'+pct(g.computed)+'</td>'+
+      '<td style="font-weight:600;" title="performance on work due so far">'+((g.duePct===null||g.duePct===undefined)?'<span class="tag dim">--</span>':pct(g.duePct))+'</td>'+
       '<td><label class="sr-only" for="ovr-'+g.sid+'">Override percent for '+esc(g.name||g.email)+'</label><input id="ovr-'+g.sid+'" type="number" min="0" max="100" step="0.1" placeholder="\u2014" value="'+(g.override?g.override.pct:'')+'" style="width:64px;"></td>'+
       '<td style="font-weight:600;color:var(--text-bright);">'+pct(g.finalPct)+(g.override?' <span class="tag violet" title="manual override">ovr</span>':'')+'</td>'+
+      '<td><button class="btn btn-ghost btn-sm" data-letter="'+g.sid+'" data-lname="'+esc(g.name||g.email||'')+'" title="'+((g.letterBasis===null||g.letterBasis===undefined)?'nothing due yet':(g.override?(Math.round(g.letterBasis*100)+'% (manual override)'):(Math.round(g.letterBasis*100)+'% on work due to date')))+'" style="font-weight:700;padding:0 4px;">'+((g.letterBasis===null||g.letterBasis===undefined)?'\u2014':esc(letterForPct(g.letterBasis*100, gscale)))+'</button></td>'+
       '<td><button class="btn btn-ghost btn-sm" data-saveovr="'+g.sid+'">Save</button> <button class="btn btn-ghost btn-sm" data-breakdown="'+g.sid+'" data-bdname="'+esc(g.name||g.email||'')+'">Detail</button></td></tr>';
   });
   html+='</tbody></table></div>';
@@ -2178,6 +2474,14 @@ function buildGradebook(host,c,weights,rows,gradedExams,examScore,asgScore,overr
     });
   });
   $('csvBtn').addEventListener('click', function(){ exportCSV(c,computed,examCols); });
+  if($('gsBtn')){ $('gsBtn').addEventListener('click', function(){ openGradeScaleEditor(c, function(){ renderGradebook(host); }); }); }
+  Array.prototype.forEach.call(host.querySelectorAll('[data-letter]'), function(b){
+    b.addEventListener('click', function(){
+      var sid=b.getAttribute('data-letter'), gObj=null;
+      for(var i=0;i<computed.length;i++){ if(computed[i].sid===sid){ gObj=computed[i]; break; } }
+      openLetterBasis(b.getAttribute('data-lname'), gObj, gscale);
+    });
+  });
   Array.prototype.forEach.call(host.querySelectorAll('[data-saveovr]'), function(b){ b.addEventListener('click', function(){
     var sid=b.getAttribute('data-saveovr');
     var v=$('ovr-'+sid).value;
@@ -2287,14 +2591,16 @@ function exportCSV(c,rows,examCols){
     var t=String(col.label).replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&#39;/g,"'").replace(/&quot;/g,'"');
     return '"'+t.replace(/"/g,'""')+'%"';
   });
-  var head=['Student','Email','Subscription','Reading%','Quizzes%','Arenas%','Attendance%','Capstone%','Assignments%'].concat(examHead).concat(['Weighted%','Override%','Final grade%']);
+  var gscale=effectiveGradeScale(c);
+  var head=['Student','Email','Subscription','Reading%','Quizzes%','Arenas%','Attendance%','Capstone%','Assignments%'].concat(examHead).concat(['Weighted%','To date%','Override%','Final grade%','Letter']);
   var lines=[head.join(',')];
   rows.forEach(function(g){
     function p(x){ return x===null||x===undefined?'':Math.round(x*100); }
     var ovr = g.override ? g.override.pct : '';
     var examVals = examCols.map(function(col){ var f=g.examScores?g.examScores[col.id]:null; return p(f); });
     var line=[ '"'+(g.name||'').replace(/"/g,'""')+'"', '"'+(g.email||'')+'"', g.sub,
-      p(g.reading),p(g.quizzes),p(g.arenas),(g.attendance===null||g.attendance===undefined?'':p(g.attendance)),(g.capstone===null||g.capstone===undefined?'':p(g.capstone)),p(g.assignments) ].concat(examVals).concat([ p(g.computed), ovr, p(g.finalPct) ]);
+      p(g.reading),p(g.quizzes),p(g.arenas),(g.attendance===null||g.attendance===undefined?'':p(g.attendance)),(g.capstone===null||g.capstone===undefined?'':p(g.capstone)),p(g.assignments) ].concat(examVals).concat([ p(g.computed), p(g.duePct), ovr, p(g.finalPct),
+      '"'+((g.letterBasis===null||g.letterBasis===undefined)?'\u2014':letterForPct(g.letterBasis*100, gscale))+'"' ]);
     lines.push(line.join(','));
   });
   var blob=new Blob([lines.join('\n')],{type:'text/csv'});
@@ -6952,15 +7258,19 @@ function computeWeightedGrade(callback){
   if (!uid || !courseId) { callback(null); return; }
   // pull the latest tournament standing into ma_capstone before reading it
   capstoneSync(courseId).then(function(){ return Promise.all([
-    sb.from('ma_course').select('id,title,owner_id,weight_reading,weight_quizzes,weight_arenas,weight_midterm,weight_final,weight_attendance,weight_capstone,att_presence_share').eq('id', courseId).maybeSingle(),
+    // select('*') rather than naming columns: it picks up grade_scale once that
+    // column exists without failing the whole query before the migration runs.
+    sb.from('ma_course').select('*').eq('id', courseId).maybeSingle(),
     sb.from('ma_chapter_progress').select('chapter,reading_done,quiz_passed,quiz_score').eq('student_id', uid).eq('course_id', courseId),
     sb.from('ma_attempt').select('arena_slug,is_correct,score_pct,attempt_no,created_at').eq('user_id', uid).or('course_id.eq.'+courseId+',course_id.is.null'),
-    sb.from('ma_exam').select('id,kind,title,total_points,item_ids,weight,attempt_scoring').eq('course_id', courseId).eq('is_published', true),
-    sb.from('ma_attendance_session').select('id,quiz_points,base_points,open_at,created_at').eq('course_id', courseId),
+    sb.from('ma_exam').select('id,kind,title,total_points,item_ids,weight,attempt_scoring,closes_at').eq('course_id', courseId).eq('is_published', true),
+    sb.from('ma_attendance_session').select('id,quiz_points,base_points,open_at,close_at,created_at').eq('course_id', courseId),
     sb.from('ma_attendance_checkin').select('session_id,present,quiz_score').eq('user_id', uid),
     sb.from('ma_enrollment').select('created_at').eq('course_id', courseId).eq('user_id', uid).maybeSingle(),
     sb.from('ma_capstone').select('sim_score,rubric_score').eq('course_id', courseId).eq('student_id', uid).maybeSingle(),
-    sb.from('ma_capstone_config').select('sim_share').eq('course_id', courseId).maybeSingle()
+    sb.from('ma_capstone_config').select('sim_share,closes_at').eq('course_id', courseId).maybeSingle(),
+    sb.from('ma_quiz_deadline').select('chapter,closes_at').eq('course_id', courseId),
+    sb.from('ma_arena_deadline').select('arena_slug,closes_at').eq('course_id', courseId)
   ]); }).then(function(r){
     var course = r[0].data; if (!course) { callback(null); return; }
     var prog = r[1].data ? r[1].data : [];
@@ -6985,6 +7295,32 @@ function computeWeightedGrade(callback){
     function examWeight(e){ if(e.weight!==null && e.weight!==undefined && e.weight!==''){ return Number(e.weight); } return (e.kind==='final')?(W.final||0):(W.midterm||0); }
     var gradedExams=exams.slice().sort(function(a,b){ var af=(a.kind==='final')?1:0, bf=(b.kind==='final')?1:0; return af-bf; });
     var examIds=gradedExams.map(function(e){ return e.id; });
+    // ---- DUE-TO-DATE tallies: the basis for the letter grade. Same rule as the
+    // instructor gradebook (see dueWeightedPct), so the two always agree.
+    var _now=Date.now();
+    var _capCfg=(r[8] && r[8].data) ? r[8].data : null;
+    var _dueCh=dueChapters(r[9]&&r[9].data?r[9].data:[], _now);
+    var _dueAr=dueArenaSlugs(r[10]&&r[10].data?r[10].data:[], _now);
+    var _dueChSet=dueSetOf(_dueCh);
+    var _dRead=0, _dQuiz=0;
+    prog.forEach(function(p){
+      if(!_dueChSet[Number(p.chapter)]){ return; }
+      if(p.reading_done){ _dRead++; }
+      var qs=(p.quiz_score!==null&&p.quiz_score!==undefined)?Number(p.quiz_score):0;
+      if(isNaN(qs)||qs<0){ qs=0; } if(qs>1){ qs=1; }
+      _dQuiz+=qs;
+    });
+    var _ab=arenaBreakdown(arenas), _perfBySlug={};
+    (_ab||[]).forEach(function(x){ _perfBySlug[x.slug]=x.pct; });
+    var _dArena=0;
+    _dueAr.forEach(function(sl){ _dArena += (_perfBySlug[sl]!==undefined?_perfBySlug[sl]:0); });
+    // A student cannot see the rest of the section's check-ins, which is what
+    // the gradebook uses to tell a cancelled session from a missed one, so the
+    // coarser test is used here: attendance joins the letter once this student
+    // has checked in somewhere in the course.
+    var _dueSess=(attCheckins && attCheckins.length) ? attSessions.filter(function(s){ return dueBefore(s.close_at, _now); }) : [];
+    var _dAtt=_dueSess.length ? computeAttendanceScore(_dueSess, attCheckins, course.att_presence_share, enrAtMs) : null;
+    var _capDue = !!(_capCfg && dueBefore(_capCfg.closes_at, _now));
     function finish(scoreById){
       var comps=[['Reading',reading,W.reading],['Quizzes',quizzes,W.quizzes],['Arenas',arenaScore,W.arenas]];
       if(attInfo && W.attendance>0){ comps.push(['Attendance', attInfo.score, W.attendance]); }
@@ -6996,7 +7332,21 @@ function computeWeightedGrade(callback){
       });
       var wsum=comps.reduce(function(s,x){return s+x[2];},0);
       var total=wsum>0?comps.reduce(function(s,x){return s+x[1]*x[2];},0)/wsum:0;
-      callback({ course:course, comps:comps, total:total, perChapter:prog, perArena:arenaBreakdown(arenas) });
+      // work due so far, anything not done counted as 0 -- the letter basis
+      var _dp=[
+        { key:'Reading', w:W.reading, n:_dueCh.length, earned:_dRead },
+        { key:'Quizzes', w:W.quizzes, n:_dueCh.length, earned:_dQuiz },
+        { key:'Arenas',  w:W.arenas,  n:_dueAr.length, earned:_dArena }
+      ];
+      if(_dueSess.length>0 && _dAtt){ _dp.push({ key:'Attendance', w:W.attendance, n:1, earned:_dAtt.score }); }
+      if(_capDue || capScore!==null){ _dp.push({ key:'GEST Capstone', w:W.capstone, n:1, earned:(capScore===null?0:capScore) }); }
+      gradedExams.forEach(function(e){
+        var sc=(scoreById && scoreById[e.id]!==undefined)?scoreById[e.id]:null;
+        if(!(dueBefore(e.closes_at,_now) || sc!==null)){ return; }
+        _dp.push({ key:(e.title||(e.kind==='final'?'Final':'Midterm')), w:examWeight(e), n:1, earned:(sc===null?0:sc) });
+      });
+      var dueTotal=dueWeightedPct(_dp);
+      callback({ course:course, comps:comps, total:total, dueTotal:dueTotal, dueParts:_dp, perChapter:prog, perArena:arenaBreakdown(arenas) });
     }
     if (examIds.length===0){ finish({}); return; }
     sb.from('ma_exam_attempt').select('exam_id,item_id,points_earned,created_at').eq('student_id',uid).in('exam_id',examIds).not('graded_at','is',null).then(function(ea){
@@ -7102,6 +7452,9 @@ function loadMyGradesDetail(host, summary){
 function gradeSummaryCard(summary){
   if(!summary){ return ''; }
   var pct = Math.round(summary.total*100);
+  var _gsc = effectiveGradeScale(summary.course);
+  var _pb = (summary.dueTotal!==null && summary.dueTotal!==undefined) ? summary.dueTotal : null;
+  var _letter = (_pb===null) ? '\u2014' : letterForPct(_pb*100, _gsc);
   var rows='';
   summary.comps.forEach(function(c){
     var notTaken = c[3]===true;
@@ -7112,6 +7465,7 @@ function gradeSummaryCard(summary){
   h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">';
   h+='<h3 style="font-size:15px;margin:0;">Your grade so far</h3>';
   h+='<span class="mono" style="font-size:22px;color:var(--text-bright);font-weight:600;">'+pct+'%</span></div>';
+  h+='<div style="font-size:12.5px;color:var(--text-muted);margin:-2px 0 10px;">Letter grade: <b>'+esc(_letter)+'</b>'+(_pb!==null?(' \u2014 your score on everything due so far ('+Math.round(_pb*100)+'%). Work you did not do by its deadline counts as 0; work not yet due is not counted at all. The '+pct+'% above is different \u2014 it projects the whole course, so work not yet due counts as 0 there too.'):' \u2014 appears once something is due')+'</div>';
   h+='<table class="data-table"><caption class="sr-only">Weighted grade components</caption><thead><tr><th scope="col">Component</th><th scope="col">Score</th><th scope="col">Weight</th></tr></thead><tbody>'+rows+'</tbody></table>';
   h+='<div style="font-size:12px;color:var(--text-subtle);margin-top:8px;">Weighted total of all components. Reading and quizzes update as you complete them. Arenas are scored on performance: each of the 13 arenas contributes the average of your attempts (up to two), and arenas you have not played count as 0. Exams you have not taken count as 0 until taken. This matches how your instructor\u2019s gradebook weights each part.</div>';
   h+='</div>';
