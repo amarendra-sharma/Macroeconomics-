@@ -34,7 +34,8 @@
 
   var C = {
     axis:    "#334155",
-    grid:    "#e2e8f0",
+    grid:    "#e9edf3",
+    guide:   "#475569",
     demand:  "#0f3d9e",   /* navy  — AD, IS, MD, demand */
     supply:  "#b87408",   /* gold  — SRAS, LM, MS, supply */
     alt:     "#7c3aed",   /* violet — the shifted curve */
@@ -58,14 +59,22 @@
     var x0 = m.l, x1 = W - m.r, y0 = H - m.b, y1 = m.t;
     function X(v) { return x0 + ((v - xmin) / (xmax - xmin)) * (x1 - x0); }
     function Y(v) { return y0 - ((v - ymin) / (ymax - ymin)) * (y0 - y1); }
+    /* every value a student may be asked to read gets registered here, so the
+       scale can be chosen to put it ON a gridline and its number printed */
     return { W: W, H: H, m: m, xmax: xmax, ymax: ymax, xmin: xmin, ymin: ymin,
-             X: X, Y: Y, x0: x0, x1: x1, y0: y0, y1: y1 };
+             X: X, Y: Y, x0: x0, x1: x1, y0: y0, y1: y1,
+             mustX: (opts.mustX || []), mustY: (opts.mustY || []),
+             extraX: [], extraY: [] };
   }
 
   function esc(s) {
     return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
   function fmt(n) { return (Math.round(n * 100) / 100).toString(); }
+  function isNumericLabel(lab) {
+    if (lab === undefined || lab === null) { return true; }
+    return /^-?[0-9.,$%\s]+$/.test(String(lab));
+  }
 
   function line(x1, y1, x2, y2, stroke, width, dash) {
     return "<line x1='" + x1 + "' y1='" + y1 + "' x2='" + x2 + "' y2='" + y2 +
@@ -89,16 +98,113 @@
       "' fill='" + (color || C.ink) + "'/>";
   }
 
+  /* A round tick step that divides every value the question turns on, so no
+     marked point ever falls between two labels. */
+  function chooseStep(span, must, lo) {
+    if (!(span > 0)) { return 1; }
+    var mags = [0.1, 0.2, 0.25, 0.5, 1, 2, 2.5, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 5000];
+    var i, j, st, n, hits, fallback = null;
+    for (i = 0; i < mags.length; i++) {
+      st = mags[i];
+      n = Math.floor(span / st + 1e-9);
+      if (n < 3 || n > 14) { continue; }
+      if (fallback === null) { fallback = st; }
+      hits = true;
+      for (j = 0; j < (must || []).length; j++) {
+        var v = must[j];
+        if (v === null || v === undefined || !isFinite(v)) { continue; }
+        if (Math.abs((v - lo) / st - Math.round((v - lo) / st)) > 1e-6) { hits = false; break; }
+      }
+      if (hits) { return st; }
+    }
+    return fallback || (span / 5);
+  }
+  function tickList(lo, hi, must) {
+    var st = chooseStep(hi - lo, must, lo), out = [], v;
+    for (v = lo; v <= hi + 1e-9; v += st) { out.push(Math.round(v * 1e6) / 1e6); }
+    return out;
+  }
+
+  /* axes() reserves its place; the scale is drawn in svgWrap, once every
+     marked value is known and the tick step can be chosen to include them */
   function axes(P, xlab, ylab) {
-    var s = "";
+    P._xlab = xlab || "Output";
+    P._ylab = ylab || "Price level";
+    return "<!--AXES-->";
+  }
+
+  function axesSvg(P) {
+    var s = "", i, v;
+    var mustX = (P.mustX || []).slice(), mustY = (P.mustY || []).slice();
+    for (i = 0; i < (P.extraX || []).length; i++) { mustX.push(P.extraX[i].v); }
+    for (i = 0; i < (P.extraY || []).length; i++) { mustY.push(P.extraY[i].v); }
+    P.ticksX = tickList(P.xmin, P.xmax, mustX);
+    P.ticksY = tickList(P.ymin, P.ymax, mustY);
+    for (i = 0; i < P.ticksX.length; i++) {
+      v = P.ticksX[i];
+      if (v <= P.xmin) { continue; }
+      s += line(P.X(v), P.y0, P.X(v), P.y1, C.grid, 1);
+    }
+    for (i = 0; i < P.ticksY.length; i++) {
+      v = P.ticksY[i];
+      if (v <= P.ymin) { continue; }
+      s += line(P.x0, P.Y(v), P.x1, P.Y(v), C.grid, 1);
+    }
     s += line(P.x0, P.y0, P.x1, P.y0, C.axis, 1.5);
     s += line(P.x0, P.y0, P.x0, P.y1, C.axis, 1.5);
+    for (i = 0; i < P.ticksX.length; i++) { s += line(P.X(P.ticksX[i]), P.y0, P.X(P.ticksX[i]), P.y0 + 4, C.axis, 1); }
+    for (i = 0; i < P.ticksY.length; i++) {
+      if (P.ticksY[i] <= P.ymin) { continue; }
+      s += line(P.x0 - 4, P.Y(P.ticksY[i]), P.x0, P.Y(P.ticksY[i]), C.axis, 1);
+    }
     s += "<polygon points='" + P.x1 + "," + P.y0 + " " + (P.x1 - 6) + "," + (P.y0 - 4) +
          " " + (P.x1 - 6) + "," + (P.y0 + 4) + "' fill='" + C.axis + "'/>";
     s += "<polygon points='" + P.x0 + "," + P.y1 + " " + (P.x0 - 4) + "," + (P.y1 + 6) +
          " " + (P.x0 + 4) + "," + (P.y1 + 6) + "' fill='" + C.axis + "'/>";
-    s += txt(P.x1, P.y0 + 28, xlab || "Output", { anchor: "end", fill: C.muted, size: 12, weight: 600 });
-    s += txt(P.x0 - 36, P.y1 + 4, ylab || "Price level", { fill: C.muted, size: 12, weight: 600 });
+    s += txt(P.x1, P.y0 + 32, P._xlab, { anchor: "end", fill: C.muted, size: 12, weight: 600 });
+    s += txt(P.x0 - 36, P.y1 - 6, P._ylab, { fill: C.muted, size: 12, weight: 600 });
+    return s;
+  }
+
+  function dedupe(list, pos, tol) {
+    var out = [], i, j, dup;
+    for (i = 0; i < (list || []).length; i++) {
+      dup = false;
+      for (j = 0; j < out.length; j++) { if (Math.abs(pos(out[j]) - pos(list[i])) < tol) { dup = true; } }
+      if (!dup) { out.push(list[i]); }
+    }
+    return out;
+  }
+
+  /* tick numbers and the marked values, the marked value winning any clash */
+  function axisNumbers(P) {
+    var s = "", i, j, v, px, py, clash;
+    var ex = dedupe(P.extraX || [], function (a) { return P.X(a.v); }, 1.5);
+    var ey = dedupe(P.extraY || [], function (a) { return P.Y(a.v); }, 1.5);
+    for (i = 0; i < (P.ticksX || []).length; i++) {
+      v = P.ticksX[i]; px = P.X(v); clash = false;
+      for (j = 0; j < ex.length; j++) { if (Math.abs(P.X(ex[j].v) - px) < 19) { clash = true; } }
+      if (!clash) { s += txt(px, P.y0 + 15, fmt(v), { anchor: "middle", size: 10.5, fill: C.muted }); }
+    }
+    for (i = 0; i < (P.ticksY || []).length; i++) {
+      v = P.ticksY[i];
+      if (v <= P.ymin) { continue; }
+      py = P.Y(v); clash = false;
+      for (j = 0; j < ey.length; j++) { if (Math.abs(P.Y(ey[j].v) - py) < 11) { clash = true; } }
+      if (!clash) { s += txt(P.x0 - 7, py + 3.5, fmt(v), { anchor: "end", size: 10.5, fill: C.muted }); }
+    }
+    for (i = 0; i < ex.length; i++) {
+      px = P.X(ex[i].v);
+      if (px < P.x0 - 1 || px > P.x1 + 1) { continue; }
+      s += line(px, P.y0, px, P.y0 + 5, C.ink, 1.4);
+      s += txt(px, P.y0 + 16, ex[i].text, { anchor: "middle", size: 11, fill: C.ink, weight: 700 });
+    }
+    for (i = 0; i < ey.length; i++) {
+      py = P.Y(ey[i].v);
+      if (py < P.y1 - 1 || py > P.y0 + 1) { continue; }
+      s += line(P.x0 - 5, py, P.x0, py, C.ink, 1.4);
+      s += txt(P.x0 - 7, py + 3.5, ey[i].text, { anchor: "end", size: 11, fill: C.ink, weight: 700 });
+    }
     return s;
   }
 
@@ -151,19 +257,26 @@
   function markPoint(P, x, y, opts) {
     opts = opts || {};
     var s = "";
-    s += line(P.X(x), P.Y(y), P.X(x), P.y0, C.muted, 1, "4 3");
-    s += line(P.X(x), P.Y(y), P.x0, P.Y(y), C.muted, 1, "4 3");
+    s += line(P.X(x), P.Y(y), P.X(x), P.y0, C.guide, 1.2, "5 3");
+    s += line(P.X(x), P.Y(y), P.x0, P.Y(y), C.guide, 1.2, "5 3");
     s += dot(P, x, y, opts.color || C.ink);
-    if (opts.xlab !== false) {
-      s += txt(P.X(x), P.y0 + 15, opts.xlab || fmt(x), { anchor: "middle", size: 11, fill: C.muted });
-    }
-    if (opts.ylab !== false) {
-      s += txt(P.x0 - 6, P.Y(y) + 4, opts.ylab || fmt(y), { anchor: "end", size: 11, fill: C.muted });
-    }
+    /* the numbers are written by axisNumbers, after the scale is settled.
+       A hidden number (the answer to "read it off the graph") still registers
+       the value, so the tick step puts a numbered gridline exactly there. */
+    var sym = [];
+    if (opts.xlab !== false && isNumericLabel(opts.xlab)) { P.extraX.push({ v: x, text: (opts.xlab || fmt(x)) }); }
+    else { P.mustX.push(x); if (opts.xlab) { sym.push(opts.xlab); } }
+    if (opts.ylab !== false && isNumericLabel(opts.ylab)) { P.extraY.push({ v: y, text: (opts.ylab || fmt(y)) }); }
+    else { P.mustY.push(y); if (opts.ylab) { sym.push(opts.ylab); } }
+    /* a symbol like Y* names the answer; it goes beside the point so the
+       gridline number at that value stays readable */
+    if (sym.length) { s += txt(P.X(x) + 7, P.Y(y) - 7, sym.join(", "), { fill: C.ink, size: 11, weight: 700 }); }
     return s;
   }
 
   function svgWrap(P, inner, title) {
+    inner = inner.replace("<!--AXES-->", axesSvg(P));
+    inner += axisNumbers(P);
     return "<svg viewBox='0 0 " + P.W + " " + P.H + "' xmlns='http://www.w3.org/2000/svg' " +
       "role='img' aria-label='" + esc(title || "economic diagram") + "' style='max-width:100%;height:auto;'>" +
       "<rect x='0' y='0' width='" + P.W + "' height='" + P.H + "' fill='#ffffff'/>" +
@@ -236,8 +349,10 @@
     }
 
     if (spec.hideValues) {
-      s += dot(P, y1, p1, C.ink);
-      if (y2 != null) { s += dot(P, y2, p2, C.alt); }
+      /* the value IS the answer, so it is not printed — but the guides
+         still run to both axes and every gridline is numbered */
+      s += markPoint(P, y1, p1, { xlab: false, ylab: false });
+      if (y2 != null) { s += markPoint(P, y2, p2, { color: C.alt, xlab: false, ylab: false }); }
     } else {
       s += markPoint(P, y1, p1, {});
       if (y2 != null) { s += markPoint(P, y2, p2, { color: C.alt }); }
@@ -279,8 +394,10 @@
     }
 
     if (spec.hideValues) {
-      s += dot(P, y1, r1, C.ink);
-      if (y2 != null) { s += dot(P, y2, r2, C.alt); }
+      /* the value IS the answer, so it is not printed — but the guides
+         still run to both axes and every gridline is numbered */
+      s += markPoint(P, y1, r1, { xlab: false, ylab: false });
+      if (y2 != null) { s += markPoint(P, y2, r2, { color: C.alt, xlab: false, ylab: false }); }
     } else {
       s += markPoint(P, y1, r1, {});
       if (y2 != null) { s += markPoint(P, y2, r2, { color: C.alt }); }
@@ -318,7 +435,7 @@
     if (!spec.hideValues) {
       s += markPoint(P, un, pe, { xlab: "u*", ylab: fmt(pe) + "%" });
     } else {
-      s += dot(P, un, pe, C.ink);
+      s += markPoint(P, un, pe, { xlab: false, ylab: false });
     }
     if (spec.point && spec.point.u != null) {
       var pu = intercept1 - alpha * spec.point.u;
@@ -371,10 +488,9 @@
 
     if (spec.showSteady !== false && kStar > 0 && kStar < xmax) {
       var invAt = sRate * A * Math.pow(kStar, alpha);
-      s += line(P.X(kStar), P.Y(invAt), P.X(kStar), P.y0, C.muted, 1, "4 3");
-      s += dot(P, kStar, invAt, C.ink);
-      s += txt(P.X(kStar), P.y0 + 15, spec.hideValues ? "k*" : fmt(kStar),
-        { anchor: "middle", fill: C.muted, size: 11 });
+      /* the steady state is read off the capital axis, so it gets the same
+         guide-and-gridline treatment as every other marked point */
+      s += markPoint(P, kStar, invAt, { xlab: spec.hideValues ? "k*" : fmt(kStar), ylab: false });
     }
     return svgWrap(P, s, "Solow growth model");
   }
@@ -415,8 +531,10 @@
     }
 
     if (spec.hideValues) {
-      s += dot(P, q1, r1, C.ink);
-      if (q2 != null) { s += dot(P, q2, r2, C.alt); }
+      /* the value IS the answer, so it is not printed — but the guides
+         still run to both axes and every gridline is numbered */
+      s += markPoint(P, q1, r1, { xlab: false, ylab: false });
+      if (q2 != null) { s += markPoint(P, q2, r2, { color: C.alt, xlab: false, ylab: false }); }
     } else {
       s += markPoint(P, q1, r1, {});
       if (q2 != null) { s += markPoint(P, q2, r2, { color: C.alt }); }
@@ -461,8 +579,10 @@
     }
 
     if (spec.hideValues) {
-      s += dot(P, ms, r1, C.ink);
-      if (r2 != null) { s += dot(P, ms2, r2, C.alt); }
+      /* the value IS the answer, so it is not printed — but the guides
+         still run to both axes and every gridline is numbered */
+      s += markPoint(P, ms, r1, { xlab: false, ylab: false });
+      if (r2 != null) { s += markPoint(P, ms2, r2, { color: C.alt, xlab: false, ylab: false }); }
     } else {
       s += markPoint(P, ms, r1, {});
       if (r2 != null) { s += markPoint(P, ms2, r2, { color: C.alt }); }
@@ -507,8 +627,10 @@
     }
 
     if (spec.hideValues) {
-      s += dot(P, q1, e1, C.ink);
-      if (q2 != null) { s += dot(P, q2, e2, C.alt); }
+      /* the value IS the answer, so it is not printed — but the guides
+         still run to both axes and every gridline is numbered */
+      s += markPoint(P, q1, e1, { xlab: false, ylab: false });
+      if (q2 != null) { s += markPoint(P, q2, e2, { color: C.alt, xlab: false, ylab: false }); }
     } else {
       s += markPoint(P, q1, e1, {});
       if (q2 != null) { s += markPoint(P, q2, e2, { color: C.alt }); }

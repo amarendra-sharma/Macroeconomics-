@@ -448,9 +448,17 @@
 
     <!-- CHAPTERS -->
     <section id="view-chapters" class="hidden">
-      <h1 class="page-title">The 17 Chapters</h1>
+      <h1 class="page-title" id="chaptersTitle">The Chapters</h1>
       <div class="page-sub">Read the textbook. Each chapter opens in a new tab; mark it complete when you're done.</div>
       <div class="grid grid-3" id="chapterGrid"></div>
+
+      <div id="furtherWrap" style="margin-top:34px;padding-top:26px;border-top:1px solid var(--border);">
+        <h2 class="page-title" style="font-size:20px;">Further Reading</h2>
+        <div class="page-sub">Eight additional chapters of the textbook, beyond the graded eighteen.
+          They carry no quiz and do not count toward the course grade &mdash; they are there for
+          students who want to go further, and for seminar or term-paper work.</div>
+        <div class="grid grid-3" id="furtherGrid" style="margin-top:14px;"></div>
+      </div>
     </section>
 
     <!-- ARENAS -->
@@ -541,7 +549,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="mn-proctor.js?v=macro9"></script>
-<script src="ma-diagrams.js?v=macro9"></script>
+<script src="ma-diagrams.js?v=macro10"></script>
 <script src="ma-generators.js?v=macro9"></script>
 <script src="ma-generators-b.js?v=macro9"></script>
 <script src="ma-generators-c.js?v=macro9"></script>
@@ -556,6 +564,40 @@
 var SUPABASE_URL = 'https://rtaiivegcqqmdchpguzn.supabase.co';
 var SA_BUILD = 'macro-portal-2026-10-pvname';
 var SUPABASE_ANON_KEY = 'sb_publishable_KCPCMiKYQoEUgG45DVF5uA_ke-UxQKm';
+/* The supabase-js bundle comes from a CDN. On a network that blocks jsdelivr
+   (some campus networks and most content blockers do), window.supabase is
+   undefined and createClient throws -- which aborts THIS script tag, so every
+   function below it is never defined and the student sees a blank page with no
+   explanation. Say what happened instead, and stop cleanly. */
+if (!(window.supabase && window.supabase.createClient)) {
+  (function () {
+    var msg = document.createElement('div');
+    msg.setAttribute('style',
+      'position:fixed;inset:0;z-index:99999;display:flex;align-items:center;' +
+      'justify-content:center;background:#0b1220;color:#e2e8f0;' +
+      'font:16px/1.6 Inter,system-ui,sans-serif;padding:32px;text-align:center;');
+    msg.innerHTML =
+      '<div style="max-width:520px;">' +
+      '<div style="font-size:40px;margin-bottom:12px;">⚠️</div>' +
+      '<h1 style="font-size:22px;margin:0 0 10px;">The course could not finish loading</h1>' +
+      '<p style="margin:0 0 14px;color:#94a3b8;">A required library (supabase-js, served from ' +
+      'cdn.jsdelivr.net) was blocked or unreachable, so sign-in and all course data are ' +
+      'unavailable. This is almost always a network filter, a content blocker, or an offline ' +
+      'connection rather than a problem with your account.</p>' +
+      '<p style="margin:0 0 18px;color:#94a3b8;">Try again on a different network, or allow ' +
+      'cdn.jsdelivr.net in your blocker, then reload.</p>' +
+      '<button id="maReloadBtn" style="background:#2563eb;color:#fff;border:0;border-radius:8px;' +
+      'padding:10px 18px;font-size:15px;cursor:pointer;">Reload</button></div>';
+    function mount() {
+      document.body.appendChild(msg);
+      var b = document.getElementById('maReloadBtn');
+      if (b) { b.addEventListener('click', function () { window.location.reload(); }); }
+    }
+    if (document.body) { mount(); }
+    else { document.addEventListener('DOMContentLoaded', mount); }
+  })();
+  throw new Error('supabase-js failed to load');
+}
 var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 // Shared MacroNations proctoring engine. Point it at Applied Macroeconomics's existing
 // table/bucket so no data migration is needed.
@@ -603,6 +645,21 @@ var STUDENT_CHAPTERS = [
   {n:16,title:'The IS-LM Model',mins:32,slug:'islm-lab'},
   {n:17,title:'Monetary Policy',mins:30,slug:'policy-mix-arena'},
   {n:18,title:'Fiscal Policy',mins:30,slug:'fiscal-lab'}
+];
+/* Chapters 19-26 of the textbook. They are NOT part of STUDENT_CHAPTERS and not
+   part of N_CHAPTERS, so nothing here touches a grade denominator, a quiz
+   deadline or the quiz generators (which cover chapters 1-18 only). They are
+   offered as further reading so that eight finished chapters are not stranded
+   in a file no student can reach. */
+var FURTHER_CHAPTERS = [
+  {n:19,title:'The Phillips Curve',mins:28},
+  {n:20,title:'Supply-Side Economics',mins:26},
+  {n:21,title:'Government Debt & Deficits',mins:30},
+  {n:22,title:'Financial Crises',mins:32},
+  {n:23,title:'Inequality & Redistribution',mins:30},
+  {n:24,title:'Macro Policy Debates',mins:28},
+  {n:25,title:'Reading the MacroNations Simulation',mins:24},
+  {n:26,title:'Policy Strategy Guide',mins:26}
 ];
 var ARENA_FILE = {
   'market-sandbox':'market-sandbox.html','elasticity-explorer':'elasticity-explorer.html',
@@ -7267,8 +7324,57 @@ function ensureProfileAndCourse() {
   });
 }
 
+/* Chapters the student has marked complete in the textbook.
+   macronations-textbook.html stores its own state under localStorage key
+   'mn_textbook' as { completed: { ch1:true, ... }, ... }. The book is opened in
+   a new TAB (window.open), not an iframe, so the postMessage it sends to
+   window.parent goes nowhere -- which is why nothing in this app ever learned
+   that a chapter had been read. Same origin, so read its key directly. */
+function textbookCompletedChapters() {
+  var out = [];
+  try {
+    var st = JSON.parse(localStorage.getItem('mn_textbook') || '{}');
+    var done = st && st.completed ? st.completed : {};
+    Object.keys(done).forEach(function (k) {
+      if (!done[k]) { return; }
+      var m = /^ch(\d+)$/i.exec(k);
+      if (!m) { return; }
+      var n = parseInt(m[1], 10);
+      if (n >= 1 && n <= N_CHAPTERS) { out.push(n); }
+    });
+  } catch (e) {}
+  return out;
+}
+
+/* Push any locally-marked chapters that the server does not yet have.
+   Resolves with the set of chapters that are read according to the server
+   AFTER the sync, so the caller can paint from one source of truth. */
+function syncTextbookReading(uid, courseId) {
+  var readMap = {};
+  if (!uid || !courseId) { return Promise.resolve(readMap); }
+  return sb.from('ma_chapter_progress').select('chapter,reading_done')
+    .eq('student_id', uid).eq('course_id', courseId).then(function (res) {
+      var rows = res.data ? res.data : [];
+      rows.forEach(function (p) { if (p.reading_done) { readMap[p.chapter] = true; } });
+      var local = textbookCompletedChapters();
+      var missing = local.filter(function (n) { return !readMap[n]; });
+      if (!missing.length) { return readMap; }
+      var payload = missing.map(function (n) {
+        return { student_id: uid, course_id: courseId, chapter: n, reading_done: true };
+      });
+      return sb.from('ma_chapter_progress')
+        .upsert(payload, { onConflict: 'student_id,course_id,chapter' })
+        .then(function (up) {
+          if (!up || !up.error) { missing.forEach(function (n) { readMap[n] = true; }); }
+          return readMap;
+        });
+    }, function () { return readMap; });
+}
+
 function renderChapters() {
   var g = $('chapterGrid'); g.innerHTML = '';
+  var t = $('chaptersTitle');
+  if (t) { t.textContent = 'The ' + STUDENT_CHAPTERS.length + ' Chapters'; }
   var uid = State.user ? State.user.id : null;
   var courseId = State.payCourseId || State.selfCourseId;
   // Reflect reading completion that was earned in the textbook reader (enforced by
@@ -7295,14 +7401,42 @@ function renderChapters() {
     });
   }
   if (uid && courseId) {
-    sb.from('ma_chapter_progress').select('chapter,reading_done').eq('student_id',uid).eq('course_id',courseId).then(function(res){
-      var rows = res.data ? res.data : [];
-      rows.forEach(function(p){ if(p.reading_done){ readMap[p.chapter]=true; } });
-      paint();
-    });
+    syncTextbookReading(uid, courseId).then(function (m) { readMap = m; paint(); });
   } else {
     paint();
   }
+  renderFurtherChapters();
+}
+
+/* Ungraded further reading (chapters 19-26). Gated the same way as the paid
+   chapters so it is not a way around the subscription, but it records no
+   progress and feeds no grade. */
+function renderFurtherChapters() {
+  var g = $('furtherGrid');
+  if (!g) { return; }
+  g.innerHTML = '';
+  var anyLocked = false;
+  FURTHER_CHAPTERS.forEach(function (c) {
+    var locked = chapterLocked(c.n);
+    if (locked) { anyLocked = true; }
+    var div = document.createElement('div');
+    div.className = 'card launch';
+    div.innerHTML =
+      '<div class="c-eyebrow">Chapter ' + c.n + ' · Ungraded</div>' +
+      '<div class="c-title">' + esc(c.title) + '</div>' +
+      '<div class="c-meta">' + c.mins + ' min read</div>' +
+      (locked ? '<div class="pill soon">🔒 Subscribe to unlock</div>'
+              : '<div class="pill">Open textbook →</div>');
+    if (locked) { div.style.opacity = '.7'; }
+    div.addEventListener('click', function () {
+      if (chapterLocked(c.n)) { openSubscribePrompt('Chapter ' + c.n + ', ' + c.title); return; }
+      window.open('macronations-textbook.html#ch' + c.n, '_blank');
+    });
+    g.appendChild(div);
+  });
+  var w = $('furtherWrap');
+  if (w) { w.style.display = ''; }
+  return anyLocked;
 }
 
 function renderArenas() {
