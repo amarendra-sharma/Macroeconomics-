@@ -8318,21 +8318,27 @@ function renderTreeFigure(fig) {
 }
 function renderQuestion(item) {
   var area = $('practiceArea');
+  var kind = examItemKind(item.item_type);   /* see examItemKind: the bank and the
+                                                generator use different spellings */
   var html = '<div class="q-card">';
-  html += '<div class="q-meta">' + esc(item.item_type) + ' · ' + (item.points || 1) + ' pt</div>';
+  html += '<div class="q-meta">' + esc(examKindLabel(kind)) + ' · ' + (item.points || 1) + ' pt</div>';
   html += '<div class="q-prompt">' + esc(item.prompt) + '</div>';
   if (item.figure) { html += renderFigure(item.figure); }
 
-  if (item.item_type === 'multiple_choice' && item.options) {
+  if (kind === 'mc' && item.options && item.options.length) {
     html += '<div class="q-options" id="optWrap">';
     item.options.forEach(function(opt, i) {
       html += '<button class="q-option" data-i="' + i + '">' + esc(opt) + '</button>';
     });
     html += '</div>';
-  } else if (item.item_type === 'parameterized_decision') {
+  } else if (kind === 'decision') {
     html += '<div class="q-options" id="optWrap">' +
       '<button class="q-option" data-val="yes">Yes</button>' +
       '<button class="q-option" data-val="no">No</button></div>';
+  } else if (kind === 'short') {
+    html += '<div class="field"><label>Your answer</label>' +
+      '<textarea id="numAnswer" rows="6" style="width:100%;min-height:130px;resize:vertical;" ' +
+      'placeholder="Write your answer in a few sentences..."></textarea></div>';
   } else {
     html += '<div class="field" style="max-width:260px;"><label>Your answer</label>' +
       '<input id="numAnswer" type="text" inputmode="decimal" placeholder="e.g. 30 or 0.55"></div>';
@@ -8360,7 +8366,7 @@ function submitAnswer() {
   if (!State.currentItem) { return; }
   var item = State.currentItem;
   var submitted;
-  if (item.item_type === 'multiple_choice' || item.item_type === 'parameterized_decision') {
+  if (kind === 'mc' || kind === 'decision') {
     if (State.selectedOption === null || State.selectedOption === undefined) { return; }
     submitted = State.selectedOption;
   } else {
@@ -9797,11 +9803,43 @@ function examAnsweredCount() {
   return c;
 }
 
+/* The exam renderer and the question bank disagreed about what an item's TYPE
+   is called, and nothing reconciled them. ma_assessment_item stores
+   'multiple_choice' / 'free_response' / 'parameterized_numeric', but the
+   ma-grade-attempt edge function builds its response from the GENERATOR, whose
+   kind is 'mc' / 'short' / 'numeric' / 'decision'. renderExamQuestion only
+   tested for the database spellings, so every question fell through to the
+   final else branch: multiple-choice items rendered with no options at all and
+   written items got a one-line number box. The student saw a prompt and an
+   empty box, with nothing to choose.
+
+   This went unnoticed because ma_exam and ma_exam_attempt were both empty until
+   the bank was seeded on 2026-10-24 -- no exam had ever been taken in this
+   course, so the path had never run with real data.
+
+   Normalise both vocabularies here, at the point of use, so the renderer works
+   whichever spelling the server sends and neither side has to be redeployed in
+   step with the other. */
+function examItemKind(t) {
+  var k = String(t || '').toLowerCase();
+  if (k === 'mc' || k === 'multiple_choice') { return 'mc'; }
+  if (k === 'short' || k === 'free_response' || k === 'written' || k === 'essay') { return 'short'; }
+  if (k === 'decision' || k === 'parameterized_decision') { return 'decision'; }
+  return 'numeric';   /* numeric | parameterized_numeric | anything unrecognised */
+}
+function examKindLabel(k) {
+  return k === 'mc' ? 'multiple choice'
+       : k === 'short' ? 'written'
+       : k === 'decision' ? 'yes / no'
+       : 'numeric';
+}
+
 function renderExamQuestion() {
   var host = $('myExamsBody');
   var n = ExamState.items.length;
   var i = ExamState.idx;
   var item = ExamState.items[i];
+  var kind = examItemKind(item.item_type);
   var saved = ExamState.answers[i];
   var html = '<div class="card" style="max-width:720px;margin:0 auto;">';
   html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">' +
@@ -9811,21 +9849,21 @@ function renderExamQuestion() {
     '<div style="font-size:12.5px;color:var(--violet);">Question ' + (i+1) + ' of ' + n + '</div></div></div>';
   html += '<div style="height:5px;border-radius:5px;background:rgba(255,255,255,.08);margin-bottom:16px;overflow:hidden;"><div style="height:100%;width:' + Math.round(((i+1)/n)*100) + '%;background:linear-gradient(90deg,var(--violet2),var(--violet));"></div></div>';
   html += '<div class="q-card" style="border:none;background:none;padding:0;">';
-  html += '<div class="q-meta">' + esc(item.item_type) + ' · ' + (item.points||1) + ' pt</div>';
+  html += '<div class="q-meta">' + esc(examKindLabel(kind)) + ' · ' + (item.points||1) + ' pt</div>';
   html += '<div class="q-prompt">' + esc(item.prompt) + '</div>';
   if (item.figure) { html += renderFigure(item.figure); }
-  if (item.item_type === 'multiple_choice' && item.options) {
+  if (kind === 'mc' && item.options && item.options.length) {
     html += '<div class="q-options" id="examOpt">';
     item.options.forEach(function(opt, k) {
       var sel = (saved !== undefined && String(saved) === String(k)) ? ' sel' : '';
       html += '<button class="q-option' + sel + '" data-i="' + k + '">' + esc(opt) + '</button>';
     });
     html += '</div>';
-  } else if (item.item_type === 'parameterized_decision') {
+  } else if (kind === 'decision') {
     html += '<div class="q-options" id="examOpt">' +
       '<button class="q-option' + ((saved==='yes')?' sel':'') + '" data-val="yes">Yes</button>' +
       '<button class="q-option' + ((saved==='no')?' sel':'') + '" data-val="no">No</button></div>';
-  } else if (item.item_type === 'free_response') {
+  } else if (kind === 'short') {
     html += '<div class="field"><label>Your answer</label>' +
       '<textarea id="examText" rows="6" style="width:100%;min-height:130px;resize:vertical;" placeholder="Write your answer in a few sentences...">' + (saved!==undefined?esc(saved):'') + '</textarea>' +
       '<div style="font-size:12px;color:var(--text-subtle);margin-top:4px;">Short answer &middot; graded by your instructor.</div></div>';
