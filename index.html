@@ -549,11 +549,15 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="mn-proctor.js?v=macro9"></script>
-<script src="ma-diagrams.js?v=macro10"></script>
+<script src="ma-diagrams.js?v=macro9"></script>
 <script src="ma-generators.js?v=macro9"></script>
 <script src="ma-generators-b.js?v=macro9"></script>
 <script src="ma-generators-c.js?v=macro9"></script>
 <script src="ma-generators-d.js?v=macro9"></script>
+<script src="ma-generators-e.js?v=macro9"></script>
+<script src="ma-generators-f.js?v=macro9"></script>
+<script src="ma-generators-g.js?v=macro9"></script>
+<script src="ma-generators-h.js?v=macro9"></script>
 <script src="ma-quiz.js?v=macro9"></script>
 <script src="ma-backend.js?v=macro9"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
@@ -820,6 +824,27 @@ var State = { user:null, profile:null, role:'student', courses:[], currentCourse
 /* ---- helpers (no optional chaining / nullish) ---- */
 function $(id){ return document.getElementById(id); }
 function esc(s){ if(s===null||s===undefined){return '';} return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+/* The question bank is generator-backed: an item's real prompt is built from a
+   seed at exam time, so storing a copy of it in ma_assessment_item would be a
+   duplicate that silently goes stale the moment a generator is edited. Bank
+   rows therefore carry no prompt, and anything that needs to SHOW an item
+   builds a representative instance from the generator instead. Falls back to
+   whatever the row does carry, for hand-written items that have no generator. */
+var _bankPromptCache = {};
+function bankPrompt(it) {
+  if (!it) { return ''; }
+  if (it.prompt) { return it.prompt; }
+  var gid = it.generator_id;
+  if (!gid || typeof MAGenerators === 'undefined') { return '(no preview available)'; }
+  if (_bankPromptCache[gid]) { return _bankPromptCache[gid]; }
+  var text = '(no preview available)';
+  try {
+    var q = MAGenerators.generate(gid, 1);
+    if (q && q.prompt) { text = String(q.prompt); }
+  } catch (e) {}
+  _bankPromptCache[gid] = text;
+  return text;
+}
 /* supabase-js hides a non-2xx edge-function body in res.error.context (the raw
    Response) and sets res.error.message to a fixed, useless string. fnError digs
    out the server's own {error:"..."} and hands it to cb, so the person sees why
@@ -5760,7 +5785,13 @@ function loadPendingQuizWritten(){
       rows.forEach(function(r){
         var gen=null; try{ gen=MAGenerators.generate(r.generator_id, Number(r.seed)); }catch(e){ gen=null; }
         if(!gen || gen.kind!=='short'){ return; }
-        var it={ attempt_id:r.id, student_id:r.student_id, chapter:gen.chapter, prompt:gen.prompt, points:gen.points||1, model:(gen.answer!==undefined&&gen.answer!==null?String(gen.answer):(gen.rationale||'')), submitted:r.submitted_value };
+        /* What the AI grader marks AGAINST. Prefer the item's rubric: it is a
+           marking scheme with named criteria and marks, which is what produces
+           a defensible score. A model answer is a sample, and marking by
+           similarity to a sample penalises a different but correct route
+           through the question. Fall back to the stored answer, then to the
+           rationale, for older items that carry no rubric. */
+        var it={ attempt_id:r.id, student_id:r.student_id, chapter:gen.chapter, prompt:gen.prompt, points:gen.points||1, model:(gen.rubric||(gen.answer!==undefined&&gen.answer!==null?String(gen.answer):(gen.rationale||''))), submitted:r.submitted_value };
         QW_ITEMS[r.id]=it; items.push(it);
       });
       if(items.length===0){ body.innerHTML='<div class="card empty">No ungraded written quiz answers right now.</div>'; return; }
@@ -6443,7 +6474,7 @@ function openExamEditor(examId){
         bank[it.id]=it;
         var inExam = EDIT_IDS.indexOf(it.id)>=0;
         var tb = it.item_type==='free_response'?'<span class="tag amber">written</span>':(it.item_type==='multiple_choice'?'<span class="tag violet">MC</span>':'<span class="tag dim">numeric</span>');
-        html+='<div class="item-pick" style="display:flex;gap:10px;align-items:flex-start;"><div style="flex:1;"><div class="ip-prompt">'+esc(it.prompt)+'</div>'+
+        html+='<div class="item-pick" style="display:flex;gap:10px;align-items:flex-start;"><div style="flex:1;"><div class="ip-prompt">'+esc(bankPrompt(it))+'</div>'+
           '<div class="ip-meta">'+esc(it.id)+' \u00b7 Ch'+it.chapter+' \u00b7 '+esc(it.difficulty)+' \u00b7 '+(it.points||1)+'pt '+tb+'</div></div>'+
           (inExam?'<span class="tag green" style="align-self:center;">added</span>':'<button class="btn btn-ghost btn-sm" data-add="'+it.id+'" style="align-self:center;">Add</button>')+'</div>';
       });
@@ -6608,7 +6639,7 @@ function openAssembler(){
         bankCache[it.id]=it;
         var checked=assemblerSel[it.id]?'checked':'';
         html+='<div class="item-pick"><input type="checkbox" data-id="'+it.id+'" '+checked+' style="margin-top:4px;">'+
-          '<div style="flex:1;cursor:pointer;" data-preview="'+it.id+'"><div class="ip-prompt">'+esc(fullOrTrim(it.prompt))+'</div>'+
+          '<div style="flex:1;cursor:pointer;" data-preview="'+it.id+'"><div class="ip-prompt">'+esc(fullOrTrim(bankPrompt(it)))+'</div>'+
           '<div class="ip-meta">'+esc(it.id)+' · Ch'+it.chapter+' · '+esc(it.concept_tag)+' · '+esc(it.difficulty)+' · '+(it.points||1)+'pt'+(it.item_type==='free_response'?' · <span style="color:var(--amber);">written</span>':'')+' · <span style="color:var(--violet);">click to preview</span></div>'+
           '<div class="ip-full" id="full-'+it.id+'" style="display:none;"></div></div></div>';
       });
