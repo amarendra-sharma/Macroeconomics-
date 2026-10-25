@@ -9927,9 +9927,11 @@ function gradeExam(auto) {
   var chain = Promise.resolve();
   var earned = 0, autoPts = 0, correct = 0, pendingCount = 0, pendingPts = 0;
   items.forEach(function(it, k) {
-    var isFree = (it.item_type === 'free_response');
-    if (isFree) { pendingPts += (it.points ? Number(it.points) : 1); }
-    else { autoPts += (it.points ? Number(it.points) : 1); }
+    /* Normalise the type first: the server describes an item by its GENERATOR
+       kind ('short'), the database by its column ('free_response'). Testing the
+       raw string put every written question into the auto-graded denominator. */
+    var isFree = (examItemKind(it.item_type) === 'short');
+    var pts = it.points ? Number(it.points) : 1;
     chain = chain.then(function() {
       var submitted = ExamState.answers[k];
       if (isFree) {
@@ -9939,8 +9941,23 @@ function gradeExam(auto) {
         if (submitted === undefined || submitted === '') { submitted = '__BLANK__'; }
       }
       return sb.functions.invoke('ma-grade-attempt', { body: { action:'grade', attempt_id: it.attempt_id, submitted_value: submitted } }).then(function(fn) {
-        if (isFree) { pendingCount++; return; }
-        if (fn.data && fn.data.is_correct) { correct++; earned += (fn.data.points_earned ? Number(fn.data.points_earned) : 0); }
+        var d = (fn && fn.data) ? fn.data : {};
+        /* The server is the authority on whether an answer was auto-graded: it
+           replies { pending:true } for anything a human has to read. Trusting
+           our own guess here is what let a mis-typed item land in the wrong
+           bucket. */
+        if (d.pending || isFree) { pendingCount++; pendingPts += pts; return; }
+        autoPts += pts;
+        /* The grade action replies { ok, correct } and does NOT send
+           points_earned. Reading only `is_correct`, and only `points_earned`
+           for the score, meant every exam reported 0% no matter how well the
+           student did — while the database recorded the marks correctly.
+           Accept either field name, and take the points from the item. */
+        var right = (d.is_correct === true) || (d.correct === true);
+        if (right) { correct++; earned += pts; }
+      }, function(){
+        /* A failed call must not silently vanish from the denominator. */
+        autoPts += pts;
       });
     });
   });
