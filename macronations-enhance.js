@@ -276,7 +276,7 @@
     window.AI_INSTRUCTOR_CONFIG = { supabaseUrl: 'https://rtaiivegcqqmdchpguzn.supabase.co', functionUrl: fn };
     window.AI_INSTRUCTOR_WIDGET = { courseIds: test, talkCourseIds: test, talkBase: location.origin + '/ai-instructor/talk/', functionUrl: fn, enrollTable: 'ma_enrollment', courseTable: 'ma_course' };
     ['widget.js', 'teach-panel.js'].forEach(function (f) {
-      var s = document.createElement('script'); s.type = 'module'; s.src = base + f + '?v=20261030a'; document.head.appendChild(s);
+      var s = document.createElement('script'); s.type = 'module'; s.src = base + f + '?v=20261030b'; document.head.appendChild(s);
     });
   } catch (e) {}
 })();
