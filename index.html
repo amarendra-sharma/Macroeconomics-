@@ -549,11 +549,15 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="mn-proctor.js?v=macro9"></script>
-<script src="ma-diagrams.js?v=macro10"></script>
+<script src="ma-diagrams.js?v=macro9"></script>
 <script src="ma-generators.js?v=macro9"></script>
 <script src="ma-generators-b.js?v=macro9"></script>
 <script src="ma-generators-c.js?v=macro9"></script>
 <script src="ma-generators-d.js?v=macro9"></script>
+<script src="ma-generators-e.js?v=macro9"></script>
+<script src="ma-generators-f.js?v=macro9"></script>
+<script src="ma-generators-g.js?v=macro9"></script>
+<script src="ma-generators-h.js?v=macro9"></script>
 <script src="ma-quiz.js?v=macro9"></script>
 <script src="ma-backend.js?v=macro9"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
@@ -820,6 +824,27 @@ var State = { user:null, profile:null, role:'student', courses:[], currentCourse
 /* ---- helpers (no optional chaining / nullish) ---- */
 function $(id){ return document.getElementById(id); }
 function esc(s){ if(s===null||s===undefined){return '';} return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+/* The question bank is generator-backed: an item's real prompt is built from a
+   seed at exam time, so storing a copy of it in ma_assessment_item would be a
+   duplicate that silently goes stale the moment a generator is edited. Bank
+   rows therefore carry no prompt, and anything that needs to SHOW an item
+   builds a representative instance from the generator instead. Falls back to
+   whatever the row does carry, for hand-written items that have no generator. */
+var _bankPromptCache = {};
+function bankPrompt(it) {
+  if (!it) { return ''; }
+  if (it.prompt) { return it.prompt; }
+  var gid = it.generator_id;
+  if (!gid || typeof MAGenerators === 'undefined') { return '(no preview available)'; }
+  if (_bankPromptCache[gid]) { return _bankPromptCache[gid]; }
+  var text = '(no preview available)';
+  try {
+    var q = MAGenerators.generate(gid, 1);
+    if (q && q.prompt) { text = String(q.prompt); }
+  } catch (e) {}
+  _bankPromptCache[gid] = text;
+  return text;
+}
 /* supabase-js hides a non-2xx edge-function body in res.error.context (the raw
    Response) and sets res.error.message to a fixed, useless string. fnError digs
    out the server's own {error:"..."} and hands it to cb, so the person sees why
@@ -5760,7 +5785,13 @@ function loadPendingQuizWritten(){
       rows.forEach(function(r){
         var gen=null; try{ gen=MAGenerators.generate(r.generator_id, Number(r.seed)); }catch(e){ gen=null; }
         if(!gen || gen.kind!=='short'){ return; }
-        var it={ attempt_id:r.id, student_id:r.student_id, chapter:gen.chapter, prompt:gen.prompt, points:gen.points||1, model:(gen.answer!==undefined&&gen.answer!==null?String(gen.answer):(gen.rationale||'')), submitted:r.submitted_value };
+        /* What the AI grader marks AGAINST. Prefer the item's rubric: it is a
+           marking scheme with named criteria and marks, which is what produces
+           a defensible score. A model answer is a sample, and marking by
+           similarity to a sample penalises a different but correct route
+           through the question. Fall back to the stored answer, then to the
+           rationale, for older items that carry no rubric. */
+        var it={ attempt_id:r.id, student_id:r.student_id, chapter:gen.chapter, prompt:gen.prompt, points:gen.points||1, model:(gen.rubric||(gen.answer!==undefined&&gen.answer!==null?String(gen.answer):(gen.rationale||''))), submitted:r.submitted_value };
         QW_ITEMS[r.id]=it; items.push(it);
       });
       if(items.length===0){ body.innerHTML='<div class="card empty">No ungraded written quiz answers right now.</div>'; return; }
@@ -6443,7 +6474,7 @@ function openExamEditor(examId){
         bank[it.id]=it;
         var inExam = EDIT_IDS.indexOf(it.id)>=0;
         var tb = it.item_type==='free_response'?'<span class="tag amber">written</span>':(it.item_type==='multiple_choice'?'<span class="tag violet">MC</span>':'<span class="tag dim">numeric</span>');
-        html+='<div class="item-pick" style="display:flex;gap:10px;align-items:flex-start;"><div style="flex:1;"><div class="ip-prompt">'+esc(it.prompt)+'</div>'+
+        html+='<div class="item-pick" style="display:flex;gap:10px;align-items:flex-start;"><div style="flex:1;"><div class="ip-prompt">'+esc(bankPrompt(it))+'</div>'+
           '<div class="ip-meta">'+esc(it.id)+' \u00b7 Ch'+it.chapter+' \u00b7 '+esc(it.difficulty)+' \u00b7 '+(it.points||1)+'pt '+tb+'</div></div>'+
           (inExam?'<span class="tag green" style="align-self:center;">added</span>':'<button class="btn btn-ghost btn-sm" data-add="'+it.id+'" style="align-self:center;">Add</button>')+'</div>';
       });
@@ -6608,7 +6639,7 @@ function openAssembler(){
         bankCache[it.id]=it;
         var checked=assemblerSel[it.id]?'checked':'';
         html+='<div class="item-pick"><input type="checkbox" data-id="'+it.id+'" '+checked+' style="margin-top:4px;">'+
-          '<div style="flex:1;cursor:pointer;" data-preview="'+it.id+'"><div class="ip-prompt">'+esc(fullOrTrim(it.prompt))+'</div>'+
+          '<div style="flex:1;cursor:pointer;" data-preview="'+it.id+'"><div class="ip-prompt">'+esc(fullOrTrim(bankPrompt(it)))+'</div>'+
           '<div class="ip-meta">'+esc(it.id)+' · Ch'+it.chapter+' · '+esc(it.concept_tag)+' · '+esc(it.difficulty)+' · '+(it.points||1)+'pt'+(it.item_type==='free_response'?' · <span style="color:var(--amber);">written</span>':'')+' · <span style="color:var(--violet);">click to preview</span></div>'+
           '<div class="ip-full" id="full-'+it.id+'" style="display:none;"></div></div></div>';
       });
@@ -8287,21 +8318,27 @@ function renderTreeFigure(fig) {
 }
 function renderQuestion(item) {
   var area = $('practiceArea');
+  var kind = examItemKind(item.item_type);   /* see examItemKind: the bank and the
+                                                generator use different spellings */
   var html = '<div class="q-card">';
-  html += '<div class="q-meta">' + esc(item.item_type) + ' · ' + (item.points || 1) + ' pt</div>';
+  html += '<div class="q-meta">' + esc(examKindLabel(kind)) + ' · ' + (item.points || 1) + ' pt</div>';
   html += '<div class="q-prompt">' + esc(item.prompt) + '</div>';
   if (item.figure) { html += renderFigure(item.figure); }
 
-  if (item.item_type === 'multiple_choice' && item.options) {
+  if (kind === 'mc' && item.options && item.options.length) {
     html += '<div class="q-options" id="optWrap">';
     item.options.forEach(function(opt, i) {
       html += '<button class="q-option" data-i="' + i + '">' + esc(opt) + '</button>';
     });
     html += '</div>';
-  } else if (item.item_type === 'parameterized_decision') {
+  } else if (kind === 'decision') {
     html += '<div class="q-options" id="optWrap">' +
       '<button class="q-option" data-val="yes">Yes</button>' +
       '<button class="q-option" data-val="no">No</button></div>';
+  } else if (kind === 'short') {
+    html += '<div class="field"><label>Your answer</label>' +
+      '<textarea id="numAnswer" rows="6" style="width:100%;min-height:130px;resize:vertical;" ' +
+      'placeholder="Write your answer in a few sentences..."></textarea></div>';
   } else {
     html += '<div class="field" style="max-width:260px;"><label>Your answer</label>' +
       '<input id="numAnswer" type="text" inputmode="decimal" placeholder="e.g. 30 or 0.55"></div>';
@@ -8329,7 +8366,7 @@ function submitAnswer() {
   if (!State.currentItem) { return; }
   var item = State.currentItem;
   var submitted;
-  if (item.item_type === 'multiple_choice' || item.item_type === 'parameterized_decision') {
+  if (kind === 'mc' || kind === 'decision') {
     if (State.selectedOption === null || State.selectedOption === undefined) { return; }
     submitted = State.selectedOption;
   } else {
@@ -9766,11 +9803,43 @@ function examAnsweredCount() {
   return c;
 }
 
+/* The exam renderer and the question bank disagreed about what an item's TYPE
+   is called, and nothing reconciled them. ma_assessment_item stores
+   'multiple_choice' / 'free_response' / 'parameterized_numeric', but the
+   ma-grade-attempt edge function builds its response from the GENERATOR, whose
+   kind is 'mc' / 'short' / 'numeric' / 'decision'. renderExamQuestion only
+   tested for the database spellings, so every question fell through to the
+   final else branch: multiple-choice items rendered with no options at all and
+   written items got a one-line number box. The student saw a prompt and an
+   empty box, with nothing to choose.
+
+   This went unnoticed because ma_exam and ma_exam_attempt were both empty until
+   the bank was seeded on 2026-10-24 -- no exam had ever been taken in this
+   course, so the path had never run with real data.
+
+   Normalise both vocabularies here, at the point of use, so the renderer works
+   whichever spelling the server sends and neither side has to be redeployed in
+   step with the other. */
+function examItemKind(t) {
+  var k = String(t || '').toLowerCase();
+  if (k === 'mc' || k === 'multiple_choice') { return 'mc'; }
+  if (k === 'short' || k === 'free_response' || k === 'written' || k === 'essay') { return 'short'; }
+  if (k === 'decision' || k === 'parameterized_decision') { return 'decision'; }
+  return 'numeric';   /* numeric | parameterized_numeric | anything unrecognised */
+}
+function examKindLabel(k) {
+  return k === 'mc' ? 'multiple choice'
+       : k === 'short' ? 'written'
+       : k === 'decision' ? 'yes / no'
+       : 'numeric';
+}
+
 function renderExamQuestion() {
   var host = $('myExamsBody');
   var n = ExamState.items.length;
   var i = ExamState.idx;
   var item = ExamState.items[i];
+  var kind = examItemKind(item.item_type);
   var saved = ExamState.answers[i];
   var html = '<div class="card" style="max-width:720px;margin:0 auto;">';
   html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">' +
@@ -9780,21 +9849,21 @@ function renderExamQuestion() {
     '<div style="font-size:12.5px;color:var(--violet);">Question ' + (i+1) + ' of ' + n + '</div></div></div>';
   html += '<div style="height:5px;border-radius:5px;background:rgba(255,255,255,.08);margin-bottom:16px;overflow:hidden;"><div style="height:100%;width:' + Math.round(((i+1)/n)*100) + '%;background:linear-gradient(90deg,var(--violet2),var(--violet));"></div></div>';
   html += '<div class="q-card" style="border:none;background:none;padding:0;">';
-  html += '<div class="q-meta">' + esc(item.item_type) + ' · ' + (item.points||1) + ' pt</div>';
+  html += '<div class="q-meta">' + esc(examKindLabel(kind)) + ' · ' + (item.points||1) + ' pt</div>';
   html += '<div class="q-prompt">' + esc(item.prompt) + '</div>';
   if (item.figure) { html += renderFigure(item.figure); }
-  if (item.item_type === 'multiple_choice' && item.options) {
+  if (kind === 'mc' && item.options && item.options.length) {
     html += '<div class="q-options" id="examOpt">';
     item.options.forEach(function(opt, k) {
       var sel = (saved !== undefined && String(saved) === String(k)) ? ' sel' : '';
       html += '<button class="q-option' + sel + '" data-i="' + k + '">' + esc(opt) + '</button>';
     });
     html += '</div>';
-  } else if (item.item_type === 'parameterized_decision') {
+  } else if (kind === 'decision') {
     html += '<div class="q-options" id="examOpt">' +
       '<button class="q-option' + ((saved==='yes')?' sel':'') + '" data-val="yes">Yes</button>' +
       '<button class="q-option' + ((saved==='no')?' sel':'') + '" data-val="no">No</button></div>';
-  } else if (item.item_type === 'free_response') {
+  } else if (kind === 'short') {
     html += '<div class="field"><label>Your answer</label>' +
       '<textarea id="examText" rows="6" style="width:100%;min-height:130px;resize:vertical;" placeholder="Write your answer in a few sentences...">' + (saved!==undefined?esc(saved):'') + '</textarea>' +
       '<div style="font-size:12px;color:var(--text-subtle);margin-top:4px;">Short answer &middot; graded by your instructor.</div></div>';
@@ -9858,9 +9927,11 @@ function gradeExam(auto) {
   var chain = Promise.resolve();
   var earned = 0, autoPts = 0, correct = 0, pendingCount = 0, pendingPts = 0;
   items.forEach(function(it, k) {
-    var isFree = (it.item_type === 'free_response');
-    if (isFree) { pendingPts += (it.points ? Number(it.points) : 1); }
-    else { autoPts += (it.points ? Number(it.points) : 1); }
+    /* Normalise the type first: the server describes an item by its GENERATOR
+       kind ('short'), the database by its column ('free_response'). Testing the
+       raw string put every written question into the auto-graded denominator. */
+    var isFree = (examItemKind(it.item_type) === 'short');
+    var pts = it.points ? Number(it.points) : 1;
     chain = chain.then(function() {
       var submitted = ExamState.answers[k];
       if (isFree) {
@@ -9870,8 +9941,23 @@ function gradeExam(auto) {
         if (submitted === undefined || submitted === '') { submitted = '__BLANK__'; }
       }
       return sb.functions.invoke('ma-grade-attempt', { body: { action:'grade', attempt_id: it.attempt_id, submitted_value: submitted } }).then(function(fn) {
-        if (isFree) { pendingCount++; return; }
-        if (fn.data && fn.data.is_correct) { correct++; earned += (fn.data.points_earned ? Number(fn.data.points_earned) : 0); }
+        var d = (fn && fn.data) ? fn.data : {};
+        /* The server is the authority on whether an answer was auto-graded: it
+           replies { pending:true } for anything a human has to read. Trusting
+           our own guess here is what let a mis-typed item land in the wrong
+           bucket. */
+        if (d.pending || isFree) { pendingCount++; pendingPts += pts; return; }
+        autoPts += pts;
+        /* The grade action replies { ok, correct } and does NOT send
+           points_earned. Reading only `is_correct`, and only `points_earned`
+           for the score, meant every exam reported 0% no matter how well the
+           student did — while the database recorded the marks correctly.
+           Accept either field name, and take the points from the item. */
+        var right = (d.is_correct === true) || (d.correct === true);
+        if (right) { correct++; earned += pts; }
+      }, function(){
+        /* A failed call must not silently vanish from the denominator. */
+        autoPts += pts;
       });
     });
   });

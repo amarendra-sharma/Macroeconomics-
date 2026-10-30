@@ -266,7 +266,7 @@
 /* MacroNations AI instructor (Asha) for Macroeconomics. Loaded from here so replacing index.html cannot remove it.
    Test course only for now; real sections are added to `test` when the instructor decides.
    The widget code is shared with Microeconomics and loaded from there (text chat, whiteboard, graded-work review).
-   Voice/avatar (talk mode) needs its model files on this site and is OFF here until they are copied (talkCourseIds is empty). */
+   Voice/avatar (talk mode) runs from the model files in /ai-instructor/talk/ on THIS site (workers must be same-origin) and is on for the test course. */
 (function () {
   try {
     if (window.__aiInstructorHook) return; window.__aiInstructorHook = true;
@@ -274,7 +274,7 @@
     var fn = 'https://rtaiivegcqqmdchpguzn.supabase.co/functions/v1/ma-ai-instructor';
     var test = ['53a4d0e9-7cb4-422a-9594-37a649e7d17b'];   // Test Course-1
     window.AI_INSTRUCTOR_CONFIG = { supabaseUrl: 'https://rtaiivegcqqmdchpguzn.supabase.co', functionUrl: fn };
-    window.AI_INSTRUCTOR_WIDGET = { courseIds: test, talkCourseIds: [], functionUrl: fn, enrollTable: 'ma_enrollment', courseTable: 'ma_course' };
+    window.AI_INSTRUCTOR_WIDGET = { courseIds: test, talkCourseIds: test, talkBase: location.origin + '/ai-instructor/talk/', functionUrl: fn, enrollTable: 'ma_enrollment', courseTable: 'ma_course' };
     ['widget.js', 'teach-panel.js'].forEach(function (f) {
       var s = document.createElement('script'); s.type = 'module'; s.src = base + f + '?v=20261030a'; document.head.appendChild(s);
     });

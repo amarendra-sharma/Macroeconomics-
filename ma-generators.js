@@ -1492,6 +1492,25 @@
   /* Grade a submission. Returns {correct, points, expected} or {needsAI:true}.
      Numeric submissions are normalized first so formatting never costs a mark:
      "32,000", "$32,000", "32 000", "32000.0" all match 32000. */
+  /* Read a number a student typed. Handles thousands separators, a currency
+     symbol, a trailing percent sign, spaces, and the k / m / bn suffixes people
+     actually write. Returns {value, suffix} with value NaN when unreadable. */
+  function parseNumeric(raw) {
+    var t = String(raw == null ? "" : raw).trim().toLowerCase();
+    t = t.replace(/[,\s$]/g, "").replace(/%$/, "");
+    var mult = 1;
+    var m = t.match(/^(-?[0-9.]+)(k|thousand|m|mn|million|b|bn|billion)$/);
+    if (m) {
+      t = m[1];
+      var suf = m[2];
+      if (suf === "k" || suf === "thousand") { mult = 1e3; }
+      else if (suf === "m" || suf === "mn" || suf === "million") { mult = 1e6; }
+      else { mult = 1e9; }
+    }
+    var v = parseFloat(t);
+    return { value: isNaN(v) ? NaN : v * mult, suffix: mult };
+  }
+
   function grade(genId, seed, submitted, cfg) {
     var q = generate(genId, seed, cfg);
     if (!q) { return { error: "unknown item" }; }
@@ -1501,11 +1520,40 @@
       var ok = (pickIdx === q.answer);
       return { correct: ok, points: ok ? q.points : 0, expected: q.answer };
     }
-    var cleaned = String(submitted == null ? "" : submitted).replace(/[,\s$%]/g, "");
-    var val = parseFloat(cleaned);
+    var parsed = parseNumeric(submitted);
+    var val = parsed.value;
     var tol = (typeof q.tolerance === "number") ? q.tolerance : 0.01;
-    var good = !isNaN(val) && Math.abs(val - q.answer) <= tol;
-    return { correct: good, points: good ? q.points : 0, expected: q.answer };
+    if (isNaN(val)) {
+      return { correct: false, points: 0, expected: q.answer };
+    }
+
+    /* Exact first, so the common case costs nothing and reports nothing. */
+    if (Math.abs(val - q.answer) <= tol) {
+      return { correct: true, points: q.points, expected: q.answer };
+    }
+
+    /* Then the same number in another unit. A prompt that says "in thousands"
+       and a student who answers in dollars differ in reporting, not economics. */
+    var rateLike = /percent|%|\brate\b/i.test(String(q.prompt || "")) ||
+                   Math.abs(q.answer) < 1;
+    var factors = [1e3, 1e-3, 1e6, 1e-6, 1e9, 1e-9];
+    if (rateLike) { factors = factors.concat([1e2, 1e-2]); }
+
+    for (var fi = 0; fi < factors.length; fi++) {
+      var f = factors[fi];
+      if (Math.abs(val / f - q.answer) <= tol) {
+        return {
+          correct: true,
+          points: q.points,
+          expected: q.answer,
+          scaledBy: f,
+          note: "Accepted: same value reported in a different unit (" +
+                (f > 1 ? "x" + f : "/" + (1 / f)) + ")."
+        };
+      }
+    }
+
+    return { correct: false, points: 0, expected: q.answer };
   }
 
   function listGenerators() {
