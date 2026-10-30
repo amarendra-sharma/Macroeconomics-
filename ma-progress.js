@@ -55,7 +55,7 @@
       // course, else any enrollment. (The shell uses payCourseId || selfCourseId,
       // where payCourseId is the professor course when joined.)
       return sb.from('ma_enrollment').select('course_id,status')
-        .eq('student_id', user.id).eq('status','active')
+        .eq('student_id', user.id).in('status',['active','comped'])
         .then(function (enr) {
           var rows = (enr && enr.data) ? enr.data : [];
           var cids = rows.map(function(r){ return r.course_id; });

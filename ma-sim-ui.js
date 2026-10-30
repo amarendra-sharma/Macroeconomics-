@@ -408,10 +408,13 @@
     function submit(cb) {
       var B = global.MABackend;
       if (!B || !B.isOnline || !B.isOnline() || !B.callFn) { cb(null); return; }
-      B.callFn("ma-grade", {
-        mode: "sim", arena_slug: slug, seed: seed,
-        decisions: decisions, answers: answers
-      }, function (res) {
+      // The portal passes ?course=<id> so the run is filed under the course the
+      // student opened it from; the server checks they belong to it.
+      var courseId = null;
+      try { courseId = new URLSearchParams(global.location.search).get("course"); } catch (e) { courseId = null; }
+      var body = { mode: "sim", arena_slug: slug, seed: seed, decisions: decisions, answers: answers };
+      if (courseId) { body.course_id = courseId; }
+      B.callFn("ma-grade", body, function (res) {
         cb(res && !res.offline && !res.error ? res : null);
       });
     }
