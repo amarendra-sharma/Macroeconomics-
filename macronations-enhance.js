@@ -272,7 +272,7 @@
     if (window.__aiInstructorHook) return; window.__aiInstructorHook = true;
     var base = 'https://microeconomics.macronations.com/ai-instructor/';
     var fn = 'https://rtaiivegcqqmdchpguzn.supabase.co/functions/v1/ma-ai-instructor';
-    var test = ['53a4d0e9-7cb4-422a-9594-37a649e7d17b'];   // Test Course-1
+    var test = ['53a4d0e9-7cb4-422a-9594-37a649e7d17b', '5dcb66e4-2b3e-4b93-8305-21da505f03f7'];   // Test Course-1, Test Course-2
     window.AI_INSTRUCTOR_CONFIG = { supabaseUrl: 'https://rtaiivegcqqmdchpguzn.supabase.co', functionUrl: fn };
     window.AI_INSTRUCTOR_WIDGET = { courseIds: test, talkCourseIds: test, talkBase: location.origin + '/ai-instructor/talk/', functionUrl: fn, enrollTable: 'ma_enrollment', courseTable: 'ma_course' };
     ['widget.js', 'teach-panel.js'].forEach(function (f) {
