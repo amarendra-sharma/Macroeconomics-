@@ -6570,7 +6570,15 @@ function openExamEditor(examId){
 
   function renderQList(){
     var host=$('edQList'); if(!host){ return; }
-    if(EDIT_IDS.length===0){ host.innerHTML='<div class="card empty">No questions yet. Use \u201C+ Add questions\u201D.</div>'; updateCounts(); return; }
+    if(EDIT_IDS.length===0){
+      if(EX && EX.random_per_student && EX.random_recipe && EX.random_recipe.length){
+        var rn=0, rp=0; EX.random_recipe.forEach(function(r){ rn+=Number(r.n||0); rp+=Number(r.n||0)*Number(r.pts||1); });
+        host.innerHTML='<div class="card"><div style="font-weight:600;margin-bottom:6px;">Question draw (each student gets a different random set)</div><div class="muted" style="margin-bottom:8px;">'+rn+' questions, '+rp+' points per student, drawn from the question bank by topic.</div>'+
+          '<table style="width:100%;font-size:13px;"><tr><th align="left">Topic</th><th align="right">Questions</th><th align="right">Points each</th></tr>'+
+          EX.random_recipe.map(function(r){ return '<tr><td>'+esc(r.tag||'')+(r.chapter?' (ch '+esc(r.chapter)+')':'')+'</td><td align="right">'+esc(r.n||1)+'</td><td align="right">'+esc(r.pts||1)+'</td></tr>'; }).join('')+'</table></div>';
+        updateCounts(); return;
+      }
+      host.innerHTML='<div class="card empty">No questions yet. Use \u201C+ Add questions\u201D.</div>'; updateCounts(); return; }
     var html='';
     EDIT_IDS.forEach(function(id,idx){
       var it=bank[id]||{id:id};
