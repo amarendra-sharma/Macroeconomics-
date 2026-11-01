@@ -272,11 +272,11 @@
     if (window.__aiInstructorHook) return; window.__aiInstructorHook = true;
     var base = 'https://microeconomics.macronations.com/ai-instructor/';
     var fn = 'https://rtaiivegcqqmdchpguzn.supabase.co/functions/v1/ma-ai-instructor';
-    var test = ['53a4d0e9-7cb4-422a-9594-37a649e7d17b', '5dcb66e4-2b3e-4b93-8305-21da505f03f7'];   // Test Course-1, Test Course-2
+    var all = ['*'];   // every Macroeconomics course, current and future; each course's own Asha settings (ma_ai_settings) still decide what is on
     window.AI_INSTRUCTOR_CONFIG = { supabaseUrl: 'https://rtaiivegcqqmdchpguzn.supabase.co', functionUrl: fn };
-    window.AI_INSTRUCTOR_WIDGET = { courseIds: test, talkCourseIds: test, talkBase: location.origin + '/ai-instructor/talk/', functionUrl: fn, enrollTable: 'ma_enrollment', courseTable: 'ma_course' };
+    window.AI_INSTRUCTOR_WIDGET = { courseIds: all, talkCourseIds: all, talkBase: location.origin + '/ai-instructor/talk/', functionUrl: fn, enrollTable: 'ma_enrollment', courseTable: 'ma_course' };
     ['widget.js', 'teach-panel.js'].forEach(function (f) {
-      var s = document.createElement('script'); s.type = 'module'; s.src = base + f + '?v=20261030d'; document.head.appendChild(s);
+      var s = document.createElement('script'); s.type = 'module'; s.src = base + f + '?v=20261101a'; document.head.appendChild(s);
     });
   } catch (e) {}
 })();
